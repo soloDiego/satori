@@ -1,0 +1,9 @@
+# build artifacts
+build/
+/satori
+*.o
+
+# editor scratch files
+*.swp
+*.swo
+*~
