@@ -1,6 +1,7 @@
 # build artifacts
 build/
 /satori
+/compile_commands.json
 *.o
 
 # editor scratch files
