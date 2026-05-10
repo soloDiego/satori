@@ -1,3 +1,7 @@
+#define _POSIX_C_SOURCE 200809L
+#define RIVER_WINDOW_MANAGER_V1_VERSION 4
+
+#include <signal.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -5,15 +9,21 @@
 
 #include "river-window-management-v1-client-protocol.h"
 
-#define RIVER_WINDOW_MANAGER_V1_VERSION 4
+
+static volatile sig_atomic_t running = 1;
 
 static struct river_window_manager_v1 *wm = NULL;
+
+static void handle_signal(int sig) {
+    (void)sig;
+    running = 0;
+}
 
 static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
     fprintf(stderr, "wm: unavailable\n");
-
+    running = 0;
 }
 
 static void finished(void *data, struct river_window_manager_v1 *rwm) {
@@ -90,9 +100,6 @@ static void registry_global(void *data, struct wl_registry *registry,
         uint32_t version) {
     (void) data;
 
-    fprintf(stderr, "global: name:%u, interface:%s, version%u\n",
-            name, interface, version);
-
     if (strcmp(interface, river_window_manager_v1_interface.name) == 0) {
         uint32_t v = version < RIVER_WINDOW_MANAGER_V1_VERSION ? version : RIVER_WINDOW_MANAGER_V1_VERSION;
         wm = wl_registry_bind(registry, name,
@@ -105,8 +112,7 @@ static void registry_global_remove(void *data, struct wl_registry *registry,
         uint32_t name) {
     (void)data;
     (void)registry;
-
-    fprintf(stderr, "global remove: name:%u", name);
+    (void)name;
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -115,6 +121,13 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(void) {
+    struct sigaction sa = {0};
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
     struct wl_display *display = wl_display_connect(NULL);
 
     if (!display) {
@@ -127,7 +140,9 @@ int main(void) {
     wl_registry_add_listener(registry, &registry_listener, &wm);
     wl_display_roundtrip(display);
     river_window_manager_v1_add_listener(wm, &wm_listener, NULL);
-    wl_display_roundtrip(display);
+
+    while (running && wl_display_dispatch(display) != -1) {
+    }
 
     if (!wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
