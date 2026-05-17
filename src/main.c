@@ -1,11 +1,14 @@
 #define _POSIX_C_SOURCE 200809L
 #define RIVER_WINDOW_MANAGER_V1_VERSION 4
 
+#include <errno.h>
+#include <sys/signalfd.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 #include <wayland-client.h>
 
 #include "river-window-management-v1-client-protocol.h"
@@ -141,10 +144,25 @@ int main(void) {
     sigaction(SIGINT,  &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+    int sigfd = signalfd(-1, &mask, SFD_CLOEXEC);
+
+    if (sigfd == -1) {
+        fprintf(stderr, "signalfd failed: %s\n", strerror(errno));
+        wl_registry_destroy(registry);
+        wl_display_disconnect(display);
+        return 1;
+    }
+
     wl_display_roundtrip(display);
     if (!wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
         wl_registry_destroy(registry);
+        close(sigfd);
         wl_display_disconnect(display);
         return 1;
     }
@@ -161,6 +179,7 @@ int main(void) {
 
     river_window_manager_v1_destroy(wm);
     wl_registry_destroy(registry);
+    close(sigfd);
     wl_display_disconnect(display);
     return 0;
 }
