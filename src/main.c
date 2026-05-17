@@ -2,6 +2,7 @@
 #define RIVER_WINDOW_MANAGER_V1_VERSION 4
 
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -10,9 +11,10 @@
 #include "river-window-management-v1-client-protocol.h"
 
 
-static volatile sig_atomic_t running = 1;
-
 static struct river_window_manager_v1 *wm = NULL;
+static volatile sig_atomic_t running = 1;
+static bool got_unavailable = false;
+static bool finished_received = false;
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -23,12 +25,14 @@ static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
     fprintf(stderr, "wm: unavailable\n");
+    got_unavailable = true;
     running = 0;
 }
 
 static void finished(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
+    finished_received = true;
     fprintf(stderr, "wm: finished\n");
 }
 
@@ -99,11 +103,10 @@ static void registry_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface,
         uint32_t version) {
     (void) data;
-
     if (strcmp(interface, river_window_manager_v1_interface.name) == 0) {
         uint32_t v = version < RIVER_WINDOW_MANAGER_V1_VERSION ? version : RIVER_WINDOW_MANAGER_V1_VERSION;
-        wm = wl_registry_bind(registry, name,
-                &river_window_manager_v1_interface, v);
+        wm = wl_registry_bind(registry, name, &river_window_manager_v1_interface, v);
+        river_window_manager_v1_add_listener(wm, &wm_listener, NULL);
         fprintf(stderr, "bound river_window_manager_v1 v%u\n", v);
     }
 }
@@ -121,15 +124,7 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 int main(void) {
-    struct sigaction sa = {0};
-    sa.sa_handler = handle_signal;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGINT,  &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-
     struct wl_display *display = wl_display_connect(NULL);
-
     if (!display) {
         fprintf(stderr, "could not connect to wayland display "
                 "(is WAYLAND_DISPLAY set and a compositor running?)\n");
@@ -138,12 +133,15 @@ int main(void) {
 
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, &wm);
+
+    struct sigaction sa = {0};
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
     wl_display_roundtrip(display);
-    river_window_manager_v1_add_listener(wm, &wm_listener, NULL);
-
-    while (running && wl_display_dispatch(display) != -1) {
-    }
-
     if (!wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
         wl_registry_destroy(registry);
@@ -151,6 +149,15 @@ int main(void) {
         return 1;
     }
 
+    while (running && wl_display_dispatch(display) != -1) {
+    }
+
+    if (!got_unavailable) {
+        river_window_manager_v1_stop(wm);
+        wl_display_flush(display);
+        while (!finished_received && wl_display_dispatch(display) != -1) {
+        }
+    }
 
     river_window_manager_v1_destroy(wm);
     wl_registry_destroy(registry);
