@@ -15,21 +15,24 @@
 #include "river-window-management-v1-client-protocol.h"
 
 
-static struct river_window_manager_v1 *wm = NULL;
-static bool got_unavailable = false;
-static bool finished_received = false;
+struct satori {
+    struct river_window_manager_v1 *wm;
+    bool got_unavailable;
+    bool finished_received;
+};
+
 
 static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
-    (void)data;
+    struct satori *state = data;
     (void)rwm;
     fprintf(stderr, "wm: unavailable\n");
-    got_unavailable = true;
+    state->got_unavailable = true;
 }
 
 static void finished(void *data, struct river_window_manager_v1 *rwm) {
-    (void)data;
+    struct satori *state = data;
     (void)rwm;
-    finished_received = true;
+    state->finished_received = true;
     fprintf(stderr, "wm: finished\n");
 }
 
@@ -99,11 +102,11 @@ static const struct river_window_manager_v1_listener wm_listener = {
 static void registry_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface,
         uint32_t version) {
-    (void) data;
+    struct satori *state = data;
     if (strcmp(interface, river_window_manager_v1_interface.name) == 0) {
         uint32_t v = version < RIVER_WINDOW_MANAGER_V1_VERSION ? version : RIVER_WINDOW_MANAGER_V1_VERSION;
-        wm = wl_registry_bind(registry, name, &river_window_manager_v1_interface, v);
-        river_window_manager_v1_add_listener(wm, &wm_listener, NULL);
+        state->wm = wl_registry_bind(registry, name, &river_window_manager_v1_interface, v);
+        river_window_manager_v1_add_listener(state->wm, &wm_listener, state);
         fprintf(stderr, "bound river_window_manager_v1 v%u\n", v);
     }
 }
@@ -128,8 +131,10 @@ int main(void) {
         return 1;
     }
 
+    struct satori satori = {0};
+
     struct wl_registry *registry = wl_display_get_registry(display);
-    wl_registry_add_listener(registry, &registry_listener, &wm);
+    wl_registry_add_listener(registry, &registry_listener, &satori);
 
     sigset_t mask;
     sigemptyset(&mask);
@@ -183,7 +188,7 @@ int main(void) {
     }
 
     wl_display_roundtrip(display);
-    if (!wm) {
+    if (!satori.wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
         wl_registry_destroy(registry);
         close(sigfd);
@@ -191,14 +196,14 @@ int main(void) {
         return 1;
     }
 
-    if (!got_unavailable) {
-        river_window_manager_v1_stop(wm);
+    if (!satori.got_unavailable) {
+        river_window_manager_v1_stop(satori.wm);
         wl_display_flush(display);
-        while (!finished_received && wl_display_dispatch(display) != -1) {
+        while (!satori.finished_received && wl_display_dispatch(display) != -1) {
         }
     }
 
-    river_window_manager_v1_destroy(wm);
+    river_window_manager_v1_destroy(satori.wm);
     wl_registry_destroy(registry);
     close(sigfd);
     wl_display_disconnect(display);
