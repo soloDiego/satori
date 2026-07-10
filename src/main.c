@@ -2,6 +2,7 @@
 #define RIVER_WINDOW_MANAGER_V1_VERSION 4
 
 #include <errno.h>
+#include <poll.h>
 #include <sys/signalfd.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -15,21 +16,14 @@
 
 
 static struct river_window_manager_v1 *wm = NULL;
-static volatile sig_atomic_t running = 1;
 static bool got_unavailable = false;
 static bool finished_received = false;
-
-static void handle_signal(int sig) {
-    (void)sig;
-    running = 0;
-}
 
 static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
     fprintf(stderr, "wm: unavailable\n");
     got_unavailable = true;
-    running = 0;
 }
 
 static void finished(void *data, struct river_window_manager_v1 *rwm) {
@@ -137,13 +131,6 @@ int main(void) {
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, &wm);
 
-    struct sigaction sa = {0};
-    sa.sa_handler = handle_signal;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGINT,  &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -158,6 +145,43 @@ int main(void) {
         return 1;
     }
 
+    int wl_fd = wl_display_get_fd(display);
+    bool should_exit = false;
+
+    while (!should_exit) {
+        while (wl_display_prepare_read(display) != 0) {
+            wl_display_dispatch_pending(display);
+        }
+
+        wl_display_flush(display);
+
+        struct pollfd pfds[2] = {
+            { .fd = wl_fd, .events = POLLIN },
+            { .fd = sigfd, .events = POLLIN },
+        };
+        int ret = poll(pfds, 2, -1);
+
+        if (ret < 0) {
+            wl_display_cancel_read(display);
+            if (errno == EINTR) continue;
+            fprintf(stderr, "poll %s\n", strerror(errno));
+            break;
+        }
+
+        if (pfds[0].revents & POLLIN) {
+            wl_display_read_events(display);
+            wl_display_dispatch_pending(display);
+        } else {
+            wl_display_cancel_read(display);
+        }
+
+        if (pfds[1].revents & POLLIN) {
+            struct signalfd_siginfo si;
+            read(sigfd, &si, sizeof si);
+            should_exit = true;
+        }
+    }
+
     wl_display_roundtrip(display);
     if (!wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
@@ -165,9 +189,6 @@ int main(void) {
         close(sigfd);
         wl_display_disconnect(display);
         return 1;
-    }
-
-    while (running && wl_display_dispatch(display) != -1) {
     }
 
     if (!got_unavailable) {
