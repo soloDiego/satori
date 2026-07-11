@@ -28,8 +28,14 @@ build:
 	mkdir -p build
 
 clean:
-	rm -rf build satori
+	rm -rf build satori satori-asan
 
-.PHONY: all clean
+asan: build/river-window-management-v1-client-protocol.c build/river-window-management-v1-client-protocol.h
+	$(CC) -std=c17 -O1 -g -fsanitize=address -fno-omit-frame-pointer \
+		-Wall -Wextra -Wpedantic -Ibuild $(PKG_CFLAGS) \
+		src/main.c build/river-window-management-v1-client-protocol.c \
+		-o satori-asan $(PKG_LIBS)
+
+.PHONY: all clean asan
 
 

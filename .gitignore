@@ -1,6 +1,6 @@
 # build artifacts
 build/
-/satori
+/satori*
 /compile_commands.json
 *.o
 
