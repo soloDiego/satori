@@ -8,58 +8,97 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
 #include "river-window-management-v1-client-protocol.h"
 
-
 struct satori {
-    struct river_window_manager_v1 *wm;
+    struct river_window_manager_v1  *wm;
     bool got_unavailable;
     bool finished_received;
+    struct output                   *outputs;
+    struct seat                     *seats;
+};
+struct output {
+    struct river_output_v1  *handle;
+    struct satori           *satori;
+    int32_t x, y;
+    int32_t width, height;
+    struct output           *next;
+};
+struct seat {
+    struct river_seat_v1 *handle;
+    struct seat          *next;
 };
 
+// output listener 
+static void output_dimensions(void *data, struct river_output_v1 *output, int32_t width, int32_t height) {
+    (void) output;
 
+    struct output *o = data;
+    o->width = width;
+    o->height = height;
+    fprintf(stderr, "output: %dx%d\n", width, height);
+}
+static void output_position(void *data, struct river_output_v1 *output, int32_t x, int32_t y) {
+    (void) output;
+    struct output *o = data;
+    o->x = x;
+    o->y = y;
+    fprintf(stderr, "output: x:%d,y:%d\n", x, y);
+}
+static void wl_output(void *data, struct river_output_v1 *output, uint32_t name) {
+    (void) data;
+    (void) output;
+    (void) name;
+}
+static void output_removed(void *data, struct river_output_v1 *output) {
+    (void) data;
+    (void) output;
+}
+static const struct river_output_v1_listener output_listener = {
+    .dimensions = output_dimensions,
+    .position   = output_position,
+    .wl_output  = wl_output,
+    .removed    = output_removed,
+};
+
+// wm listener
 static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
     struct satori *state = data;
     (void)rwm;
     fprintf(stderr, "wm: unavailable\n");
     state->got_unavailable = true;
 }
-
 static void finished(void *data, struct river_window_manager_v1 *rwm) {
     struct satori *state = data;
     (void)rwm;
     state->finished_received = true;
     fprintf(stderr, "wm: finished\n");
 }
-
 static void manage_start(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     fprintf(stderr, "wm: manage start\n");
     river_window_manager_v1_manage_finish(rwm);
 }
-
 static void render_start(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     fprintf(stderr, "wm: render start\n");
     river_window_manager_v1_render_finish(rwm);
 }
-
 static void session_locked(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
     fprintf(stderr, "wm: session locked\n");
 }
-
 static void session_unlocked(void *data, struct river_window_manager_v1 *rwm) {
     (void)data;
     (void)rwm;
     fprintf(stderr, "wm: session unlocked\n");
 }
-
 static void window(void *data, 
         struct river_window_manager_v1 *rwm, 
         struct river_window_v1 *id) {
@@ -68,25 +107,45 @@ static void window(void *data,
     (void)id;
     fprintf(stderr, "wm: window\n");
 }
-
-static void output(void *data, 
+static void wm_output(void *data, 
         struct river_window_manager_v1 *rwm, 
         struct river_output_v1 *id) {
-    (void) data;
     (void) rwm;
-    (void) id;
+
+    struct satori *satori = data;
+    struct output *o = calloc(1, sizeof *o);
+    if (!o) {
+        fprintf(stderr, "wm_output: calloc failed\n");
+        return;
+    }
+    o->handle = id;
+    o->satori = satori;
+
+    o->next = satori->outputs;
+    satori->outputs = o;
+
+    river_output_v1_add_listener(id, &output_listener, o);
+
     fprintf(stderr, "wm: output\n");
 }
-
 static void seat(void *data, 
         struct river_window_manager_v1 *rwm, 
         struct river_seat_v1 *id) {
-    (void) data;
     (void) rwm;
-    (void) id;
+
+    struct satori *satori = data;
+    struct seat *s = calloc(1, sizeof *s);
+    if(!s) {
+        fprintf(stderr, "seat: calloc failed\n");
+        return;
+    }
+    s->handle = id;
+
+    s->next = satori->seats;
+    satori->seats = s;
+
     fprintf(stderr, "wm: seat\n");
 }
-
 static const struct river_window_manager_v1_listener wm_listener = {
     .unavailable  = unavailable,
     .finished     = finished,
@@ -95,10 +154,11 @@ static const struct river_window_manager_v1_listener wm_listener = {
     .session_locked = session_locked,
     .session_unlocked = session_unlocked,
     .window = window,
-    .output = output,
+    .output = wm_output,
     .seat = seat
 };
 
+// registry listener
 static void registry_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface,
         uint32_t version) {
@@ -110,14 +170,12 @@ static void registry_global(void *data, struct wl_registry *registry,
         fprintf(stderr, "bound river_window_manager_v1 v%u\n", v);
     }
 }
-
 static void registry_global_remove(void *data, struct wl_registry *registry,
         uint32_t name) {
-    (void)data;
-    (void)registry;
-    (void)name;
+    (void) data;
+    (void) registry;
+    (void) name;
 }
-
 static const struct wl_registry_listener registry_listener = {
     .global = registry_global,
     .global_remove = registry_global_remove,
@@ -201,6 +259,22 @@ int main(void) {
         wl_display_flush(display);
         while (!satori.finished_received && wl_display_dispatch(display) != -1) {
         }
+    }
+
+    struct output *o = satori.outputs;
+    while (o) {
+        struct output *next = o->next;      // save BEFORE freeing
+        river_output_v1_destroy(o->handle);  // free the wayland proxy
+        free(o);                             // free your struct
+        o = next;
+    }
+
+    struct seat *s = satori.seats;
+    while (s) {
+        struct seat *next = s->next;
+        river_seat_v1_destroy(s->handle);
+        free(s);
+        s = next;
     }
 
     river_window_manager_v1_destroy(satori.wm);
