@@ -20,6 +20,7 @@ struct satori {
     bool got_unavailable;
     bool finished_received;
     struct output                   *outputs;
+    struct window                   *windows;
     struct seat                     *seats;
 };
 struct output {
@@ -28,6 +29,14 @@ struct output {
     int32_t x, y;
     int32_t width, height;
     struct output           *next;
+};
+struct window {
+    struct river_window_v1  *handle;
+    struct satori           *satori;
+    char                    *app_id;
+    char                    *title;
+    int32_t width, height;
+    struct window           *next;
 };
 struct seat {
     struct river_seat_v1 *handle;
@@ -66,6 +75,96 @@ static const struct river_output_v1_listener output_listener = {
     .removed    = output_removed,
 };
 
+// window listener
+static void win_closed(void *data, struct river_window_v1 *w) { 
+    (void) w;
+
+    struct window *win = data;
+    struct window **pp = &win->satori->windows;
+    while (*pp != win) {
+        pp = &(*pp)->next;  // remember next is struct window *
+    }
+    *pp = win->next;
+
+    river_window_v1_destroy(win->handle);
+    free(win->app_id);
+    free(win->title);
+    free(win);
+} 
+static void win_dimensions_hint(void *data, struct river_window_v1 *w, int32_t min_width, 
+        int32_t min_height, int32_t max_width, int32_t max_height) { 
+    (void)data; (void)w; (void)min_width; (void)min_height; (void)max_width; (void)max_height;
+}
+static void win_dimensions(void *data, struct river_window_v1 *w, int32_t width, int32_t height) { 
+    (void) w;
+
+    struct window *win = data;
+    win->width = width;
+    win->height = height;
+    fprintf(stderr, "window: %dx%d\n", width, height);
+}
+static void win_app_id(void *data, struct river_window_v1 *w, const char *app_id) { 
+    (void) w;
+
+    struct window *win = data;
+    free(win->app_id);
+    win->app_id = app_id ? strdup(app_id) : NULL;
+}
+static void win_title(void *data, struct river_window_v1 *w, const char *title) { 
+    (void) w;
+
+    struct window *win = data;
+    free(win->title);
+    win->title = title ? strdup(title) : NULL;
+}
+static void win_parent(void *data, struct river_window_v1 *w, struct river_window_v1 *parent) { (void)data; (void)w; (void)parent; }
+static void win_decoration_hint(void *data, struct river_window_v1 *w, uint32_t hint) { (void)data; (void)w; (void)hint; }
+static void win_pointer_move_requested(void *data, struct river_window_v1 *w, struct river_seat_v1 *seat) { 
+    (void)data; (void)w; (void)seat; 
+}
+static void win_pointer_resize_requested(void *data, struct river_window_v1 *w, struct river_seat_v1 *seat, uint32_t edges) {
+    (void)data; (void)w; (void)seat; (void)edges; 
+}
+static void win_show_window_menu_requested(void *data, struct river_window_v1 *w, int32_t x, int32_t y) {
+    (void)data; (void)w; (void)x; (void)y; 
+} 
+static void win_maximize_requested(void *data, struct river_window_v1 *w) { (void)data; (void)w; }
+static void win_unmaximize_requested(void *data, struct river_window_v1 *w) { (void)data; (void)w; }
+static void win_fullscreen_requested(void *data, struct river_window_v1 *w, struct river_output_v1 *output) { 
+    (void)data; (void)w; (void)output;
+}
+static void win_exit_fullscreen_requested(void *data, struct river_window_v1 *w) { (void)data; (void)w; }
+static void win_minimize_requested(void *data, struct river_window_v1 *w) { (void)data; (void)w; }
+static void win_unreliable_pid(void *data, struct river_window_v1 *w, int32_t unreliable_pid) {
+    (void)data; (void)w; (void)unreliable_pid;
+}
+static void win_presentation_hint(void *data, struct river_window_v1 *w, uint32_t hint) {
+    (void)data; (void)w; (void)hint;
+}
+static void win_identifier(void *data, struct river_window_v1 *w, const char *id) {
+    (void)data; (void)w; (void)id;
+}
+static const struct river_window_v1_listener window_listener = {
+    .closed = win_closed,
+    .dimensions_hint = win_dimensions_hint,
+    .dimensions = win_dimensions,
+    .app_id = win_app_id,
+    .title = win_title,
+    .parent = win_parent,
+    .decoration_hint = win_decoration_hint,
+    .pointer_move_requested = win_pointer_move_requested,
+    .pointer_resize_requested = win_pointer_resize_requested,
+    .show_window_menu_requested = win_show_window_menu_requested,
+    .maximize_requested = win_maximize_requested,
+    .unmaximize_requested = win_unmaximize_requested,
+    .fullscreen_requested = win_fullscreen_requested,
+    .exit_fullscreen_requested = win_exit_fullscreen_requested,
+    .minimize_requested = win_minimize_requested,
+    .unreliable_pid = win_unreliable_pid,
+    .presentation_hint = win_presentation_hint,
+    .identifier = win_identifier
+};
+
 // wm listener
 static void unavailable(void *data, struct river_window_manager_v1 *rwm) {
     struct satori *state = data;
@@ -102,9 +201,21 @@ static void session_unlocked(void *data, struct river_window_manager_v1 *rwm) {
 static void window(void *data, 
         struct river_window_manager_v1 *rwm, 
         struct river_window_v1 *id) {
-    (void)data;
-    (void)rwm;
-    (void)id;
+    (void) rwm;
+
+    struct satori *satori = data;
+    struct window *w = calloc(1, sizeof *w);
+    if (!w) {
+        fprintf(stderr, "wm_window: calloc failed\n");
+        return;
+    }
+    w->handle = id;
+    w->satori = satori;
+
+    w->next = satori->windows;
+    satori->windows = w;
+
+    river_window_v1_add_listener(id, &window_listener, w);
     fprintf(stderr, "wm: window\n");
 }
 static void wm_output(void *data, 
@@ -267,6 +378,16 @@ int main(void) {
         river_output_v1_destroy(o->handle);  // free the wayland proxy
         free(o);                             // free your struct
         o = next;
+    }
+
+    struct window *w = satori.windows;
+    while (w) {
+        struct window *next = w->next;
+        river_window_v1_destroy(w->handle);
+        free(w->app_id);
+        free(w->title);
+        free(w);
+        w = next;
     }
 
     struct seat *s = satori.seats;
