@@ -36,6 +36,10 @@ asan: build/river-window-management-v1-client-protocol.c build/river-window-mana
 		src/main.c build/river-window-management-v1-client-protocol.c \
 		-o satori-asan $(PKG_LIBS)
 
-.PHONY: all clean asan
+test: satori asan
+	./scripts/test-nested.sh ./satori
+	./scripts/test-nested.sh ./satori-asan
+
+.PHONY: all clean asan test
 
 
