@@ -32,10 +32,12 @@ struct output {
 };
 struct window {
     struct river_window_v1  *handle;
+    struct river_node_v1    *node;
     struct satori           *satori;
     char                    *app_id;
     char                    *title;
     int32_t width, height;
+    bool proposed;
     struct window           *next;
 };
 struct seat {
@@ -86,6 +88,7 @@ static void win_closed(void *data, struct river_window_v1 *w) {
     }
     *pp = win->next;
 
+    river_node_v1_destroy(win->node);
     river_window_v1_destroy(win->handle);
     free(win->app_id);
     free(win->title);
@@ -179,12 +182,31 @@ static void finished(void *data, struct river_window_manager_v1 *rwm) {
     fprintf(stderr, "wm: finished\n");
 }
 static void manage_start(void *data, struct river_window_manager_v1 *rwm) {
-    (void)data;
+    struct satori *satori = data;
+
+    struct output *out = satori->outputs;
+    if (out) {
+        for (struct window *win = satori->windows; win; win = win->next) {
+            if (win->proposed) continue;
+            river_window_v1_propose_dimensions(win->handle, out->width, out->height);
+            river_window_v1_inform_maximized(win->handle);
+            win->proposed = true;
+        }
+    }
+
     fprintf(stderr, "wm: manage start\n");
     river_window_manager_v1_manage_finish(rwm);
 }
 static void render_start(void *data, struct river_window_manager_v1 *rwm) {
-    (void)data;
+    struct satori *satori = data;
+
+    struct output *out = satori->outputs;
+    for (struct window *win = satori->windows; win; win = win->next) {
+        if (!win->node) continue;
+        river_node_v1_set_position(win->node, out ? out->x : 0, out ? out->y : 0);
+        river_node_v1_place_bottom(win->node);
+    }
+
     fprintf(stderr, "wm: render start\n");
     river_window_manager_v1_render_finish(rwm);
 }
@@ -211,7 +233,7 @@ static void window(void *data,
     }
     w->handle = id;
     w->satori = satori;
-
+    w->node = river_window_v1_get_node(id);
     w->next = satori->windows;
     satori->windows = w;
 
@@ -383,6 +405,7 @@ int main(void) {
     struct window *w = satori.windows;
     while (w) {
         struct window *next = w->next;
+        river_node_v1_destroy(w->node);
         river_window_v1_destroy(w->handle);
         free(w->app_id);
         free(w->title);
