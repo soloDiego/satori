@@ -32,7 +32,44 @@ Expect:
 - first line: `bound river_window_manager_v1 v4`
 - then: `wm: output`, `wm: seat`, `wm: window`, repeating `wm: manage start` /
   `wm: render start`
-- window blank (no policy yet)
+- nested window stays black: satori tracks windows but does not render them yet
+  (no `propose_dimensions` / `get_node` until Stage C). Verify via the log, not
+  the screen.
+
+### Spawn clients (exercise window tracking)
+
+No keybinds yet -> launch clients from *outside*, aimed at the nested socket.
+
+Find the nested display (the new socket that appears after launch; also printed
+by river at startup):
+
+```sh
+ls $XDG_RUNTIME_DIR/wayland-*
+```
+
+Outer session = `wayland-0`; the newly-added one = nested river.
+
+Launch a client into it:
+
+```sh
+WAYLAND_DISPLAY=wayland-N foot
+```
+
+Expect per window opened:
+
+- `wm: window`
+- (`app_id` / `title` are stored, not logged)
+- no `window: WxH` yet: the `dimensions` event is the server's reply to
+  `propose_dimensions`, which satori does not send until Stage C. No proposal
+  -> no resolved size -> no dimensions event.
+
+Client stays invisible (no render) -> close it with Ctrl-C in its launching
+terminal. Not `pkill foot` (kills every foot, incl. your outer session).
+
+Expect: no crash -- `closed` unlink + free runs.
+
+Leak check: run the session under `satori-asan` (`make asan`). Clean Ctrl-C
+exit, no ASan output = 0 leaks.
 
 ### Clean shutdown
 
