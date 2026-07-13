@@ -3,82 +3,80 @@
 Satori only runs as the WM of a live river session; outside one it fails to
 connect.
 
-## Prereqs
+Two layers:
 
-- In a river session (`WAYLAND_DISPLAY` set)
-- Built: `make`
+- `make test` -- automated, headless. Run it every change.
+- Manual nested river -- for anything visual. The automated test proves events
+  flowed, not that pixels are right.
 
-## Test 1: active WM (nested river)
+## Automated: `make test`
 
-Nested river = its own window, its own empty WM slot. Satori binds as its WM.
-A hang stays contained to that window.
+```sh
+make test
+```
 
-Run from repo root:
+Builds `satori` + `satori-asan`, runs each through
+`scripts/test-nested.sh`. Takes ~10s.
+
+Runs river under the **headless** wlroots backend (`WLR_BACKENDS=headless`):
+virtual 1280x720 output, no window on screen, outer session untouched. Satori
+binds as *its* WM, so a hang breaks nothing.
+
+Each run: bind -> spawn a real `foot` into the nested compositor -> kill it
+(exercises `win_closed`) -> SIGINT satori -> check the `stop` / `finished`
+handshake. Asserts:
+
+- `bound river_window_manager_v1 v4` -- active WM
+- `wm: output`
+- `wm: window` -- client tracked
+- `window: WxH` -- the `dimensions` event; proof `propose_dimensions` landed
+- survives the client closing -- no crash in the unlink/free path
+- `wm: finished` + process exits -- clean shutdown
+- no ASan/LSan findings (asan run) -- no leaked proxies
+
+Failure prints the log path. Run one binary directly:
+
+```sh
+./scripts/test-nested.sh ./satori-asan
+```
+
+Catches: protocol errors (`sequence_order`, double `get_node`), compositor
+hangs (missing `manage_finish` / `render_finish`), leaks, use-after-free.
+None of these are reachable by unit tests -- they need a real compositor.
+
+Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
+!= pixels correct.
+
+### Gotcha
+
+Never match satori with `pkill -f`. River's argv contains satori's path (it is
+the `-c` init command), so `-f` signals the compositor too. Use `pkill -x satori`.
+
+## Manual: visible nested river
+
+For visual checks only (does it actually draw? maximized? on top?).
 
 ```sh
 river -c "$PWD/satori 2>/tmp/satori.log"
 ```
 
-`$PWD` expands in the launching shell; from elsewhere, use satori's full path.
+Same as the automated path but on the real backend -> opens a window. `$PWD`
+expands in the launching shell; from elsewhere use satori's full path.
 
-Watch the log:
+Watch: `tail -f /tmp/satori.log`
 
-```sh
-tail -f /tmp/satori.log
-```
-
-Expect:
-
-- first line: `bound river_window_manager_v1 v4`
-- then: `wm: output`, `wm: seat`, `wm: window`, repeating `wm: manage start` /
-  `wm: render start`
-- nested window stays black: satori tracks windows but does not render them yet
-  (no `propose_dimensions` / `get_node` until Stage C). Verify via the log, not
-  the screen.
-
-### Spawn clients (exercise window tracking)
-
-No keybinds yet -> launch clients from *outside*, aimed at the nested socket.
-
-Find the nested display (the new socket that appears after launch; also printed
-by river at startup):
+Spawn a client into it (no keybinds yet -> from outside). Find the nested
+socket -- the new one; outer session is `wayland-0`:
 
 ```sh
 ls $XDG_RUNTIME_DIR/wayland-*
-```
-
-Outer session = `wayland-0`; the newly-added one = nested river.
-
-Launch a client into it:
-
-```sh
 WAYLAND_DISPLAY=wayland-N foot
 ```
 
-Expect per window opened:
+Expect: client appears, maximized, filling the nested output.
 
-- `wm: window`
-- (`app_id` / `title` are stored, not logged)
-- no `window: WxH` yet: the `dimensions` event is the server's reply to
-  `propose_dimensions`, which satori does not send until Stage C. No proposal
-  -> no resolved size -> no dimensions event.
-
-Client stays invisible (no render) -> close it with Ctrl-C in its launching
-terminal. Not `pkill foot` (kills every foot, incl. your outer session).
-
-Expect: no crash -- `closed` unlink + free runs.
-
-Leak check: run the session under `satori-asan` (`make asan`). Clean Ctrl-C
-exit, no ASan output = 0 leaks.
-
-### Clean shutdown
-
-```sh
-pkill -INT satori
-```
-
-Expect: log ends `wm: finished`, `pgrep satori` empty.
-Hang: save `/tmp/satori.log`.
+Close it with Ctrl-C in its launching terminal. Not `pkill foot` (kills every
+foot, incl. your outer session).
 
 ### Close the nested river
 
@@ -89,7 +87,7 @@ Hang: save `/tmp/satori.log`.
 
 Never `pkill river` (kills your main session too).
 
-## Test 2: unavailable path (direct run)
+## Test: unavailable path
 
 ```sh
 ./satori
@@ -102,8 +100,9 @@ Expect: `wm: unavailable`, clean exit, no `stop` sent.
 
 Locked-up compositor: SSH in (openssh enabled), kill the nested river / Satori.
 
-## Automated tests
+## Unit tests
 
-None yet. `main.c` is mostly Wayland glue, so unit tests would test libwayland,
-not Satori. First compositor-free logic: config parser, `app_id` prefix match,
-MRU list. Add a `make test` target + small C test framework then.
+None yet, and not a gap: `main.c` is Wayland glue, so unit tests would test
+libwayland. First compositor-free logic: config parser, `app_id` prefix match,
+MRU list. Add a real C test framework + wire into `make test` then -- alongside
+the smoke test, not instead of it.
