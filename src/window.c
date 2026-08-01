@@ -31,6 +31,7 @@ static void win_closed(void *data, struct river_window_v1 *handle) {
     free(win->app_id);
     free(win->title);
     free(win);
+    fprintf(stderr, "window: closed\n");
 }
 static void win_dimensions(void *data, struct river_window_v1 *handle, int32_t width, int32_t height) {
     (void) handle;

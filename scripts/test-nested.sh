@@ -47,6 +47,26 @@ check() {
     fi
 }
 
+# Same, but the pattern must appear at least $3 times -- for events that repeat
+# (a second window, a second focus change).
+check_count() {
+    local desc="$1" pattern="$2" want="$3" i got
+    for ((i = 0; i < 50; i++)); do
+        got="$(grep -cE "$pattern" "$LOG")"
+        [ "$got" -ge "$want" ] && { echo "  ok    $desc"; return; }
+        sleep 0.1
+    done
+    echo "  FAIL  $desc (/$pattern/ x$got, want $want)"
+    FAILED=1
+}
+
+# Inject a chord into the nested compositor. The headless backend has no
+# keyboard, so this is the only way to trigger a binding.
+KEYPRESS="$(dirname "$0")/../build/keypress"
+press() {
+    WAYLAND_DISPLAY="$NESTED" "$KEYPRESS" "$1" >/dev/null 2>&1
+}
+
 echo "== satori nested-river smoke test ($BIN)"
 
 sockets_before="$(ls "$XDG_RUNTIME_DIR" | grep -E '^wayland-[0-9]+$' | sort)"
@@ -78,6 +98,23 @@ CLIENT_PID=$!
 check "sees the new window"            'wm: window'
 check "window gets dimensions"         'window: [0-9]+x[0-9]+'   # proof propose_dimensions landed
 check "focuses the new window"         'seat: focus window'
+
+# Key bindings, end to end: a real key event through the compositor into an
+# action. Everything above this proves bindings exist, not that they fire.
+if [ -x "$KEYPRESS" ]; then
+    press super+return
+    check       "super+return triggers its binding" 'binding: pressed keysym 0xff0d'
+    check_count "super+return spawns a window"      'wm: window' 2
+
+    press super+q
+    check "super+q triggers its binding"  'binding: pressed keysym 0x71'
+    check "super+q closes the focused window" 'window: closed'
+
+    press super+j
+    check "super+j triggers its binding"  'binding: pressed keysym 0x6a'
+else
+    echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
+fi
 
 # Closing the client must exercise win_closed without taking satori down.
 kill "$CLIENT_PID" 2>/dev/null

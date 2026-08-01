@@ -40,4 +40,5 @@ not covered — see [docs/TESTING.md](docs/TESTING.md).
 ## License
 
 GPL-3.0-or-later. The protocol XML in `protocol/` is MIT, from
-[river](https://codeberg.org/river/river).
+[river](https://codeberg.org/river/river); the test-only XML in `tests/` is MIT,
+from wlr-protocols.

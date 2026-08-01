@@ -7,8 +7,8 @@ Three layers:
 
 - `make test` -- automated. Unit tests, then a headless nested river. Run it
   every change.
-- Manual nested river -- for anything visual, and for keys. The automated test
-  proves events flowed, not that pixels are right.
+- Manual nested river -- for anything visual. The automated test proves events
+  flowed, not that pixels are right.
 
 ## Automated: `make test`
 
@@ -23,9 +23,9 @@ Runs river under the **headless** wlroots backend (`WLR_BACKENDS=headless`):
 virtual 1280x720 output, no window on screen, outer session untouched. Satori
 binds as *its* WM, so a hang breaks nothing.
 
-Each run: bind -> spawn a real `foot` into the nested compositor -> kill it
-(exercises `win_closed`) -> SIGINT satori -> check the `stop` / `finished`
-handshake. Asserts:
+Each run: bind -> spawn a real `foot` into the nested compositor -> inject key
+chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
+`stop` / `finished` handshake. Asserts:
 
 - `bound river_window_manager_v1 v4` -- active WM
 - `bound river_xkb_bindings_v1 vN` -- keybind global present
@@ -33,6 +33,10 @@ handshake. Asserts:
 - `wm: window` -- client tracked
 - `window: WxH` -- the `dimensions` event; proof `propose_dimensions` landed
 - `seat: focus window` -- focus applied in a manage sequence
+- `binding: pressed ...` for super+return / super+q / super+j -- real key events
+  reach their actions
+- a second `wm: window` after super+return -- the spawn action ran
+- `window: closed` after super+q -- the close intent reached a manage sequence
 - survives the client closing -- no crash in the unlink/free path
 - `wm: finished` + process exits -- clean shutdown
 - no ASan/LSan findings (asan run) -- no leaked proxies
@@ -50,16 +54,27 @@ None of these are reachable by unit tests -- they need a real compositor.
 Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
 != pixels correct.
 
-Also not covered: key presses. The headless run sets `WLR_LIBINPUT_NO_DEVICES=1`
--- there is a seat, no keyboard, nothing to press. Bindings are proven created
-and enabled, never triggered; what an action does once triggered is covered by
-the unit tests. The wire between the two -- a real key reaching a binding -- is
-a manual check.
+## Key injection
 
-Nested river advertises `zwp_virtual_keyboard_manager_v1`, so this is
-automatable: a test client uploads an xkb keymap and sends keycodes. Needs
-`virtual-keyboard-unstable-v1.xml` from wlr-protocols vendored into `tests/`,
-which is not on this machine. Not done.
+The headless backend has no keyboard (`WLR_LIBINPUT_NO_DEVICES=1`), so bindings
+are triggered through `zwp_virtual_keyboard_v1` instead.
+
+```sh
+WAYLAND_DISPLAY=wayland-N ./build/keypress super+return
+```
+
+`tests/keypress.c`: binds the seat and the virtual keyboard manager, uploads an
+xkb keymap built with xkbcommon (a keymap is required before any key request),
+then presses the chord left to right and releases it in reverse. Names in
+`key_names[]`; a bare number is an evdev keycode. Roundtrip plus 40ms between
+events -- satori answers a binding with a whole manage sequence, and the chord
+must not outrun it.
+
+The protocol XML is vendored at `tests/virtual-keyboard-unstable-v1.xml`
+(wlr-protocols, MIT). Test-only: satori itself never speaks it.
+
+This covers the wire from a real key event to an action running. What the action
+then does is covered by the unit tests.
 
 ### Gotcha
 

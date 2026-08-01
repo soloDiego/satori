@@ -46,13 +46,31 @@ asan: $(PROTO_C) $(PROTO_H)
 		-Wall -Wextra -Wpedantic $(CPPFLAGS) $(PKG_CFLAGS) \
 		$(SRC) $(PROTO_C) -o satori-asan $(PKG_LIBS)
 
+# Test-only protocol: injects key presses into the headless compositor, which
+# has no keyboard of its own. Explicit rules, so the protocol/%.xml pattern
+# above does not try to claim it.
+VK_XML	:= tests/virtual-keyboard-unstable-v1.xml
+VK_H	:= build/virtual-keyboard-unstable-v1-client-protocol.h
+VK_C	:= build/virtual-keyboard-unstable-v1-client-protocol.c
+
+$(VK_H): $(VK_XML) | build
+	$(SCANNER) client-header < $< > $@
+
+$(VK_C): $(VK_XML) | build
+	$(SCANNER) private-code < $< > $@
+
+# memfd_create needs _GNU_SOURCE, which _POSIX_C_SOURCE alone hides.
+build/keypress: tests/keypress.c $(VK_C) $(VK_H) | build
+	$(CC) $(CFLAGS) $(CPPFLAGS) -D_GNU_SOURCE $(PKG_CFLAGS) -o $@ \
+		tests/keypress.c $(VK_C) $(PKG_LIBS)
+
 # Includes src/input.c (hence the explicit prerequisite), so link everything
 # except build/input.o.
 build/test-actions: tests/test_actions.c src/input.c src/satori.h build/window.o $(PROTO_O) | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(PKG_CFLAGS) -o $@ \
 		tests/test_actions.c build/window.o $(PROTO_O) $(PKG_LIBS)
 
-test: satori asan build/test-actions
+test: satori asan build/test-actions build/keypress
 	./build/test-actions
 	./scripts/test-nested.sh ./satori
 	./scripts/test-nested.sh ./satori-asan
