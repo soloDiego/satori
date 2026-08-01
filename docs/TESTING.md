@@ -27,9 +27,11 @@ Each run: bind -> spawn a real `foot` into the nested compositor -> kill it
 handshake. Asserts:
 
 - `bound river_window_manager_v1 v4` -- active WM
-- `wm: output`
+- `bound river_xkb_bindings_v1 vN` -- keybind global present
+- `wm: output`, `wm: seat`
 - `wm: window` -- client tracked
 - `window: WxH` -- the `dimensions` event; proof `propose_dimensions` landed
+- `seat: focus window` -- focus applied in a manage sequence
 - survives the client closing -- no crash in the unlink/free path
 - `wm: finished` + process exits -- clean shutdown
 - no ASan/LSan findings (asan run) -- no leaked proxies
@@ -46,6 +48,10 @@ None of these are reachable by unit tests -- they need a real compositor.
 
 Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
 != pixels correct.
+
+Also not covered: key presses. The headless run sets `WLR_LIBINPUT_NO_DEVICES=1`
+-- there is a seat, no keyboard, nothing to press. Bindings are proven created
+and enabled, never triggered. Keybinds are a manual check.
 
 ### Gotcha
 
@@ -65,18 +71,33 @@ expands in the launching shell; from elsewhere use satori's full path.
 
 Watch: `tail -f /tmp/satori.log`
 
-Spawn a client into it (no keybinds yet -> from outside). Find the nested
-socket -- the new one; outer session is `wayland-0`:
+Spawn a client with **Super+Return** (click the nested window first, so it has
+keyboard focus). Expect: `foot` appears, maximized, filling the nested output,
+and focused -- type and characters land in it.
+
+From outside works too. Find the nested socket -- the new one; outer session is
+`wayland-0`:
 
 ```sh
 ls $XDG_RUNTIME_DIR/wayland-*
 WAYLAND_DISPLAY=wayland-N foot
 ```
 
-Expect: client appears, maximized, filling the nested output.
+Close a client with Ctrl-C in its launching terminal, or Super+Q. Not
+`pkill foot` (kills every foot, incl. your outer session).
 
-Close it with Ctrl-C in its launching terminal. Not `pkill foot` (kills every
-foot, incl. your outer session).
+### Keybinds
+
+See [KEYBINDS.md](KEYBINDS.md). With two clients open:
+
+- Super+Return -- another `foot`, on top, focused
+- Super+J / Super+K -- focus cycles; the log shows `binding: pressed ...` then
+  `seat: focus window`
+- Super+Q -- focused client closes, focus lands on the next one
+
+If nothing happens, check whether the outer session's WM grabbed the key first
+-- it never reaches the nested river. Test that binding on a TTY, or rebind it
+temporarily in `keybinds[]`.
 
 ### Close the nested river
 
@@ -102,7 +123,7 @@ Locked-up compositor: SSH in (openssh enabled), kill the nested river / Satori.
 
 ## Unit tests
 
-None yet, and not a gap: `main.c` is Wayland glue, so unit tests would test
+None yet, and not a gap: `src/` is Wayland glue, so unit tests would test
 libwayland. First compositor-free logic: config parser, `app_id` prefix match,
 MRU list. Add a real C test framework + wire into `make test` then -- alongside
 the smoke test, not instead of it.
