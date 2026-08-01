@@ -12,15 +12,24 @@ Needs river 0.4.x or later, and its `river_xkb_bindings_v1` global for keybinds.
 
 ```sh
 make
-river -c "$PWD/satori"
+river -c "$PWD/satori 2>/tmp/satori.log"
 ```
 
-Started from inside an existing Wayland session, river nests itself in a window
-— that is the development setup, and a hang costs one window instead of the
-machine. See [docs/TESTING.md](docs/TESTING.md).
+Run from inside an existing Wayland session, river nests itself in a window and
+Satori manages that window's contents — the development setup, where a hang
+costs one window instead of the machine. Same command on a TTY runs it as the
+session's window manager; not yet daily-driver tested.
 
 One window manager per river instance. If the slot is already taken, Satori logs
-`wm: unavailable` and exits.
+`wm: unavailable` and exits. `river -c` is a startup command, not a lifeline:
+the compositor outlives Satori, so quit it with Ctrl-C in the launching
+terminal.
+
+## Use it
+
+Super+Return opens a terminal, Super+Q closes the focused window, Super+J/K
+cycle focus. Bindings are compiled in for now —
+[docs/KEYBINDS.md](docs/KEYBINDS.md) covers the table and how to add one.
 
 ## Tests
 
@@ -28,8 +37,9 @@ One window manager per river instance. If the slot is already taken, Satori logs
 make test
 ```
 
-Headless nested river, ~10s, run it on every change. Key presses and pixels are
-not covered — see [docs/TESTING.md](docs/TESTING.md).
+Unit tests, then a headless nested river with injected key events. ~25s, run it
+on every change. Pixels are not covered — see
+[docs/TESTING.md](docs/TESTING.md).
 
 ## Next
 
