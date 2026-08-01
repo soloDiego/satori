@@ -67,14 +67,17 @@ done
 echo "  ..    nested river on \$WAYLAND_DISPLAY=$NESTED (pid $RIVER_PID)"
 
 check "binds as active window manager" 'bound river_window_manager_v1 v4'
+check "binds the xkb bindings global"  'bound river_xkb_bindings_v1 v[0-9]+'
 check "sees an output"                 'wm: output'
+check "sees a seat"                    'wm: seat'
 
 # Spawn a client into the nested compositor.
 WAYLAND_DISPLAY="$NESTED" foot sh -c 'sleep 60' >/dev/null 2>&1 &
 CLIENT_PID=$!
 
 check "sees the new window"            'wm: window'
-check "window gets dimensions"         'window: [0-9]+x[0-9]+'   # Stage C: proof it renders
+check "window gets dimensions"         'window: [0-9]+x[0-9]+'   # proof propose_dimensions landed
+check "focuses the new window"         'seat: focus window'
 
 # Closing the client must exercise win_closed without taking satori down.
 kill "$CLIENT_PID" 2>/dev/null
