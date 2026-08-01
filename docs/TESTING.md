@@ -3,11 +3,12 @@
 Satori only runs as the WM of a live river session; outside one it fails to
 connect.
 
-Two layers:
+Three layers:
 
-- `make test` -- automated, headless. Run it every change.
-- Manual nested river -- for anything visual. The automated test proves events
-  flowed, not that pixels are right.
+- `make test` -- automated. Unit tests, then a headless nested river. Run it
+  every change.
+- Manual nested river -- for anything visual, and for keys. The automated test
+  proves events flowed, not that pixels are right.
 
 ## Automated: `make test`
 
@@ -51,7 +52,14 @@ Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
 
 Also not covered: key presses. The headless run sets `WLR_LIBINPUT_NO_DEVICES=1`
 -- there is a seat, no keyboard, nothing to press. Bindings are proven created
-and enabled, never triggered. Keybinds are a manual check.
+and enabled, never triggered; what an action does once triggered is covered by
+the unit tests. The wire between the two -- a real key reaching a binding -- is
+a manual check.
+
+Nested river advertises `zwp_virtual_keyboard_manager_v1`, so this is
+automatable: a test client uploads an xkb keymap and sends keycodes. Needs
+`virtual-keyboard-unstable-v1.xml` from wlr-protocols vendored into `tests/`,
+which is not on this machine. Not done.
 
 ### Gotcha
 
@@ -123,7 +131,29 @@ Locked-up compositor: SSH in (openssh enabled), kill the nested river / Satori.
 
 ## Unit tests
 
-None yet, and not a gap: `src/` is Wayland glue, so unit tests would test
-libwayland. First compositor-free logic: config parser, `app_id` prefix match,
-MRU list. Add a real C test framework + wire into `make test` then -- alongside
-the smoke test, not instead of it.
+`tests/test_actions.c`, run first by `make test`, also runnable alone:
+
+```sh
+make build/test-actions && ./build/test-actions
+```
+
+Covers the compositor-free half of the action layer -- focus cycling and its
+wraps, empty and single-window lists, the `focus_dirty` no-op guard, close
+intent. Fake `struct window`s on the stack, handles left NULL and never touched.
+
+It `#include`s `src/input.c` to reach the static actions, so the Makefile rule
+lists `src/input.c` as a prerequisite. Drop that and the test binary silently
+stops rebuilding when you edit an action -- it passes forever, testing nothing.
+
+The rest of `src/` is Wayland glue; unit tests there would test libwayland. Next
+compositor-free logic worth covering: config parser, `app_id` prefix match, MRU
+list. Add a real framework when the plain `CHECK` macro stops being enough.
+
+Check a test can fail before trusting it. Break the thing it covers, run it,
+revert:
+
+```sh
+sed -i 's/if (satori->focused == win) return;/if (0) return;/' src/window.c
+make -s build/test-actions && ./build/test-actions   # expect FAIL
+git checkout src/window.c
+```
