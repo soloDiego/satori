@@ -25,7 +25,25 @@ static void output_wl_output(void *data, struct river_output_v1 *handle, uint32_
     (void)data; (void)handle; (void)name;
 }
 static void output_removed(void *data, struct river_output_v1 *handle) {
-    (void)data; (void)handle;   // TODO: unlink + destroy, and re-propose window dimensions
+    (void) handle;
+
+    struct output *out = data;
+    struct satori *satori = out->satori;
+
+    // Windows first: they hold pointers into this struct, and the manage_start
+    // that follows this event will size them against whatever output is left.
+    windows_forget_output(satori, out);
+
+    // Unlink before freeing: find the pointer slot that holds out.
+    struct output **pp = &satori->outputs;
+    while (*pp != out) {
+        pp = &(*pp)->next;
+    }
+    *pp = out->next;
+
+    river_output_v1_destroy(out->handle);
+    free(out);
+    fprintf(stderr, "output: removed\n");
 }
 static const struct river_output_v1_listener output_listener = {
     .dimensions = output_dimensions,

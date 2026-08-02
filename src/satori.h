@@ -100,6 +100,7 @@ void outputs_destroy_all(struct satori *satori);
 // window.c
 void window_create(struct satori *satori, struct river_window_v1 *handle);
 void window_focus(struct satori *satori, struct window *win);
+void windows_forget_output(struct satori *satori, struct output *out);
 void windows_apply_fullscreen(struct satori *satori);   // manage sequence
 void windows_propose(struct satori *satori);        // manage sequence
 void windows_apply_closes(struct satori *satori);   // manage sequence

@@ -152,6 +152,21 @@ void window_focus(struct satori *satori, struct window *win) {
     satori->focus_dirty = true;
 }
 
+// Drop every reference to an output that is going away. The manage sequence
+// that follows the removed event re-proposes what is left.
+void windows_forget_output(struct satori *satori, struct output *out) {
+    for (struct window *win = satori->windows; win; win = win->next) {
+        if (win->fs_output == out) {
+            // The compositor already exited fullscreen for us when the output
+            // went; we only have to stop believing otherwise.
+            win->fs_output = NULL;
+            win->fullscreen = false;
+            win->fullscreen_dirty = true;
+        }
+        win->proposed = false;      // sized against an output that no longer exists
+    }
+}
+
 void windows_apply_fullscreen(struct satori *satori) {
     for (struct window *win = satori->windows; win; win = win->next) {
         if (!win->fullscreen_dirty) continue;
