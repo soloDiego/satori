@@ -50,6 +50,9 @@ struct window {
     int32_t width, height;
     bool proposed;          // dimensions proposed; the server owes us a dimensions event
     bool close_pending;     // close requested; sent in the next manage sequence
+    bool fullscreen;        // desired state, not necessarily the applied one
+    bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
+    struct output           *fs_output;     // output to fullscreen on; NULL = the first
     struct window           *next;
 };
 
@@ -91,11 +94,13 @@ extern const struct river_window_manager_v1_listener wm_listener;
 
 // output.c
 void output_create(struct satori *satori, struct river_output_v1 *handle);
+struct output *output_from_handle(struct satori *satori, struct river_output_v1 *handle);
 void outputs_destroy_all(struct satori *satori);
 
 // window.c
 void window_create(struct satori *satori, struct river_window_v1 *handle);
 void window_focus(struct satori *satori, struct window *win);
+void windows_apply_fullscreen(struct satori *satori);   // manage sequence
 void windows_propose(struct satori *satori);        // manage sequence
 void windows_apply_closes(struct satori *satori);   // manage sequence
 void windows_render(struct satori *satori);         // render sequence

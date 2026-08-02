@@ -78,10 +78,25 @@ static void win_show_window_menu_requested(void *data, struct river_window_v1 *h
 }
 static void win_maximize_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
 static void win_unmaximize_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
+// Both fullscreen events are followed by a manage_start, so recording intent is
+// enough -- no manage_dirty needed to get a sequence.
 static void win_fullscreen_requested(void *data, struct river_window_v1 *handle, struct river_output_v1 *output) {
-    (void)data; (void)handle; (void)output;
+    (void) handle;
+
+    struct window *win = data;
+    win->fullscreen = true;
+    win->fullscreen_dirty = true;
+    // A null output means the client had no preference; fall back at apply time.
+    win->fs_output = output ? output_from_handle(win->satori, output) : NULL;
 }
-static void win_exit_fullscreen_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
+static void win_exit_fullscreen_requested(void *data, struct river_window_v1 *handle) {
+    (void) handle;
+
+    struct window *win = data;
+    win->fullscreen = false;
+    win->fullscreen_dirty = true;
+    win->fs_output = NULL;
+}
 static void win_minimize_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
 static void win_unreliable_pid(void *data, struct river_window_v1 *handle, int32_t unreliable_pid) {
     (void)data; (void)handle; (void)unreliable_pid;
@@ -137,6 +152,36 @@ void window_focus(struct satori *satori, struct window *win) {
     satori->focus_dirty = true;
 }
 
+void windows_apply_fullscreen(struct satori *satori) {
+    for (struct window *win = satori->windows; win; win = win->next) {
+        if (!win->fullscreen_dirty) continue;
+        win->fullscreen_dirty = false;
+
+        if (win->fullscreen) {
+            struct output *out = win->fs_output ? win->fs_output : satori->outputs;
+            if (!out) {
+                win->fullscreen = false;    // nowhere to be fullscreen on
+                continue;
+            }
+            river_window_v1_fullscreen(win->handle, out->handle);
+            river_window_v1_inform_fullscreen(win->handle);
+        } else {
+            river_window_v1_exit_fullscreen(win->handle);
+            river_window_v1_inform_not_fullscreen(win->handle);
+
+            // Leaving fullscreen leaves dimensions and position undefined until
+            // both are set again. The protocol asks for that in this same
+            // sequence: clearing the flag lets windows_propose run below, and
+            // node position is rendering state, which a manage sequence may
+            // also touch.
+            win->proposed = false;
+            struct output *out = satori->outputs;
+            if (win->node && out) river_node_v1_set_position(win->node, out->x, out->y);
+        }
+        fprintf(stderr, "window: fullscreen %s\n", win->fullscreen ? "on" : "off");
+    }
+}
+
 void windows_propose(struct satori *satori) {
     struct output *out = satori->outputs;
     if (!out) return;
@@ -145,9 +190,16 @@ void windows_propose(struct satori *satori) {
         // The server answers every proposal with a dimensions event, which
         // starts another sequence: re-proposing unconditionally never settles.
         if (win->proposed) continue;
+        // The compositor owns a fullscreen window's size, and it is not
+        // maximized. windows_apply_fullscreen clears the flag on the way out.
+        if (win->fullscreen) continue;
         river_window_v1_propose_dimensions(win->handle, out->width, out->height);
         river_window_v1_inform_maximized(win->handle);
         win->proposed = true;
+        // A proposal is otherwise invisible: on a screen-sized window the
+        // dimensions event that answers it looks the same as the fullscreen
+        // one, so a re-proposal cannot be told apart without this.
+        fprintf(stderr, "window: propose %dx%d\n", out->width, out->height);
     }
 }
 

@@ -50,6 +50,13 @@ void output_create(struct satori *satori, struct river_output_v1 *handle) {
     fprintf(stderr, "wm: output\n");
 }
 
+struct output *output_from_handle(struct satori *satori, struct river_output_v1 *handle) {
+    for (struct output *out = satori->outputs; out; out = out->next) {
+        if (out->handle == handle) return out;
+    }
+    return NULL;
+}
+
 void outputs_destroy_all(struct satori *satori) {
     struct output *out = satori->outputs;
     while (out) {

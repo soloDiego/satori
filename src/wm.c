@@ -27,6 +27,9 @@ static void wm_finished(void *data, struct river_window_manager_v1 *handle) {
 static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) {
     struct satori *satori = data;
 
+    // Before propose: leaving fullscreen clears the proposed flag so the window
+    // is re-sized in this same sequence, which is what the protocol asks for.
+    windows_apply_fullscreen(satori);
     windows_propose(satori);
     windows_apply_closes(satori);
     seats_apply_focus(satori);
