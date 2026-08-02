@@ -13,6 +13,9 @@
 
 static int failures;
 
+// Actions that ignore their argument still have to be handed one.
+#define NOARG ((union satori_arg){0})
+
 #define CHECK(cond) check((cond), #cond, __LINE__)
 
 static void check(bool ok, const char *expr, int line) {
@@ -46,11 +49,11 @@ static void test_focus_next_walks_then_wraps(void) {
     struct fixture f;
     fixture_init(&f);
 
-    action_focus_next(&f.satori);
+    action_focus_next(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.middle);
-    action_focus_next(&f.satori);
+    action_focus_next(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.oldest);
-    action_focus_next(&f.satori);
+    action_focus_next(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.newest);
 }
 
@@ -59,11 +62,11 @@ static void test_focus_prev_walks_then_wraps(void) {
     fixture_init(&f);
 
     // From the head, "previous" is the tail.
-    action_focus_prev(&f.satori);
+    action_focus_prev(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.oldest);
-    action_focus_prev(&f.satori);
+    action_focus_prev(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.middle);
-    action_focus_prev(&f.satori);
+    action_focus_prev(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.newest);
 }
 
@@ -72,23 +75,23 @@ static void test_cycling_with_nothing_focused(void) {
 
     fixture_init(&f);
     f.satori.focused = NULL;
-    action_focus_next(&f.satori);
+    action_focus_next(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.newest);
 
     fixture_init(&f);
     f.satori.focused = NULL;
-    action_focus_prev(&f.satori);
+    action_focus_prev(&f.satori, NOARG);
     CHECK(f.satori.focused == &f.oldest);
 }
 
 static void test_cycling_an_empty_list_is_a_no_op(void) {
     struct satori satori = {0};
 
-    action_focus_next(&satori);
+    action_focus_next(&satori, NOARG);
     CHECK(satori.focused == NULL);
     CHECK(!satori.focus_dirty);
 
-    action_focus_prev(&satori);
+    action_focus_prev(&satori, NOARG);
     CHECK(satori.focused == NULL);
     CHECK(!satori.focus_dirty);
 }
@@ -99,9 +102,9 @@ static void test_cycling_a_single_window_stays_put(void) {
     satori.windows = &only;
     satori.focused = &only;
 
-    action_focus_next(&satori);
+    action_focus_next(&satori, NOARG);
     CHECK(satori.focused == &only);
-    action_focus_prev(&satori);
+    action_focus_prev(&satori, NOARG);
     CHECK(satori.focused == &only);
 
     // Focus never actually moved, so the manage sequence has nothing to apply.
@@ -112,7 +115,7 @@ static void test_focus_change_marks_dirty(void) {
     struct fixture f;
     fixture_init(&f);
 
-    action_focus_next(&f.satori);
+    action_focus_next(&f.satori, NOARG);
     CHECK(f.satori.focus_dirty);
 
     // seats_apply_focus clears the flag; re-focusing the same window must not
@@ -127,7 +130,7 @@ static void test_close_marks_only_the_focused_window(void) {
     fixture_init(&f);
     f.satori.focused = &f.middle;
 
-    action_close_focused(&f.satori);
+    action_close_focused(&f.satori, NOARG);
     CHECK(f.middle.close_pending);
     CHECK(!f.newest.close_pending);
     CHECK(!f.oldest.close_pending);
@@ -140,7 +143,7 @@ static void test_close_marks_only_the_focused_window(void) {
 
 static void test_close_with_nothing_focused_is_a_no_op(void) {
     struct satori satori = {0};
-    action_close_focused(&satori);
+    action_close_focused(&satori, NOARG);
     CHECK(satori.focused == NULL);
 }
 

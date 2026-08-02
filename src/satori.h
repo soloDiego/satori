@@ -12,9 +12,6 @@
 #define SATORI_WM_VERSION           4
 #define SATORI_XKB_BINDINGS_VERSION 3
 
-// Command run by the spawn action. Becomes a config key once scfg parsing lands.
-#define SATORI_TERMINAL "foot"
-
 struct output;
 struct window;
 struct seat;
@@ -61,15 +58,23 @@ struct seat {
     struct seat             *next;
 };
 
+// Lets one action serve many bindings -- the spawn action is the whole reason,
+// and it is what a config file will fill in per binding.
+union satori_arg {
+    const char  *cmd;
+    uint32_t    u;
+};
+
 // An action never touches window management state directly: bindings fire
 // outside a manage sequence. Actions record intent on struct satori, the next
 // manage sequence applies it.
-typedef void (*satori_action)(struct satori *satori);
+typedef void (*satori_action)(struct satori *satori, union satori_arg arg);
 
 struct keybind {
-    uint32_t        keysym;     // xkbcommon keysym, see XKB_KEY_* in <xkbcommon/xkbcommon-keysyms.h>
-    uint32_t        modifiers;  // river_seat_v1.modifiers bitfield
-    satori_action   action;
+    uint32_t            keysym;     // xkbcommon keysym, see XKB_KEY_* in <xkbcommon/xkbcommon-keysyms.h>
+    uint32_t            modifiers;  // river_seat_v1.modifiers bitfield
+    satori_action       action;
+    union satori_arg    arg;
 };
 
 struct binding {

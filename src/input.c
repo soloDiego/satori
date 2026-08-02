@@ -40,14 +40,18 @@ static void spawn(const char *cmd) {
     waitpid(pid, NULL, 0);      // the intermediate child exits immediately
 }
 
-static void action_spawn_terminal(struct satori *satori) {
+static void action_spawn(struct satori *satori, union satori_arg arg) {
     (void) satori;
-    spawn(SATORI_TERMINAL);
+    spawn(arg.cmd);
 }
-static void action_close_focused(struct satori *satori) {
+static void action_close_focused(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
     if (satori->focused) satori->focused->close_pending = true;
 }
-static void action_focus_next(struct satori *satori) {
+static void action_focus_next(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
     if (!satori->windows) return;
 
     struct window *next = (satori->focused && satori->focused->next)
@@ -55,7 +59,9 @@ static void action_focus_next(struct satori *satori) {
         : satori->windows;      // wrap
     window_focus(satori, next);
 }
-static void action_focus_prev(struct satori *satori) {
+static void action_focus_prev(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
     if (!satori->windows) return;
 
     // The window whose next is the focused one; the tail when focus is at the
@@ -74,10 +80,10 @@ static void action_focus_prev(struct satori *satori) {
 
 // Fixed for now; the scfg config parser will build this table at startup.
 static const struct keybind keybinds[] = {
-    { XKB_KEY_Return, MOD, action_spawn_terminal },
-    { XKB_KEY_q,      MOD, action_close_focused  },
-    { XKB_KEY_j,      MOD, action_focus_next     },
-    { XKB_KEY_k,      MOD, action_focus_prev     },
+    { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot" } },
+    { XKB_KEY_q,      MOD, action_close_focused, {0} },
+    { XKB_KEY_j,      MOD, action_focus_next,    {0} },
+    { XKB_KEY_k,      MOD, action_focus_prev,    {0} },
 };
 
 static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {
@@ -86,7 +92,7 @@ static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {
     struct binding *bind = data;
     fprintf(stderr, "binding: pressed keysym 0x%x mods 0x%x\n",
             bind->keybind->keysym, bind->keybind->modifiers);
-    bind->keybind->action(bind->satori);
+    bind->keybind->action(bind->satori, bind->keybind->arg);
 }
 static void binding_released(void *data, struct river_xkb_binding_v1 *handle) {
     (void)data; (void)handle;
