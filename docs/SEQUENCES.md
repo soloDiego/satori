@@ -16,7 +16,7 @@ The point is atomicity: a window is never half-configured on screen, and Satori
 never races an input event it has not seen yet.
 
 Consequence for the code: **an event handler records intent, a sequence applies
-it.** `binding_pressed` (`src/input.c:83`) sets `close_pending` or moves
+it.** `binding_pressed` (`src/input.c:116`) sets `close_pending` or moves
 `satori->focused`; `wm_manage_start` (`src/wm.c:27`) turns that into
 `river_window_v1_close` and `river_seat_v1_focus_window`.
 
@@ -24,8 +24,12 @@ it.** `binding_pressed` (`src/input.c:83`) sets `close_pending` or moves
 
 | State | Sequence | Satori |
 | --- | --- | --- |
-| dimensions, maximize/fullscreen, focus, close, capabilities, binding enable/disable | manage only | `windows_propose`, `windows_apply_closes`, `seats_apply_focus`, `bindings_enable_pending` |
-| node position, stacking, borders, clip boxes | manage or render | `windows_render` (`src/window.c:161`) |
+| dimensions, maximize/fullscreen, focus, close, capabilities, binding enable/disable | manage only | `windows_apply_fullscreen`, `windows_propose`, `windows_apply_closes`, `seats_apply_focus`, `bindings_enable_pending` |
+| node position, stacking, borders, clip boxes | manage or render | `windows_render` |
+
+`exit_session` belongs to neither: it is not window management state, so
+`action_exit_session` calls it straight from the binding handler. It is the only
+action that is not deferred.
 
 ## Invariants
 
@@ -39,8 +43,15 @@ it.** `binding_pressed` (`src/input.c:83`) sets `close_pending` or moves
   event has finished.
 - Every proposal is answered with a `dimensions` event, which starts another
   sequence. Proposing unconditionally in `manage_start` never settles — hence
-  the `proposed` flag (`src/satori.h:53`) and `enabled` on bindings. Any new
-  per-window request needs the same treatment.
+  the `proposed` flag and `enabled` on bindings. Any new per-window request
+  needs the same treatment.
+- Leaving fullscreen leaves the window's dimensions and position undefined until
+  both are set again, and the protocol asks for that in the same manage
+  sequence. `windows_apply_fullscreen` runs before `windows_propose` and clears
+  `proposed` so the re-proposal lands in that sequence; position is set inline,
+  which a manage sequence may do because it is rendering state.
+- A fullscreen window's size belongs to the compositor: `propose_dimensions` and
+  `set_position` do not affect it, and `windows_propose` skips it.
 - `get_node` is once per window, ever. Twice is a protocol error.
 - `wl_output` and `wl_seat` globals can disappear from `wl_registry` before the
   matching `river_output_v1.removed` / `river_seat_v1.removed` arrives: globals
@@ -52,15 +63,29 @@ it.** `binding_pressed` (`src/input.c:83`) sets `close_pending` or moves
 ## Stacking
 
 `windows` is prepended, so it runs newest to oldest, and `windows_render` pushes
-each node to the bottom in turn (`src/window.c:169`). The last one pushed is the
+each node to the bottom in turn (`src/window.c:237`). The last one pushed is the
 oldest, so the newest ends on top. Walking the same list with `place_top` inverts
 it and buries new windows.
 
+## Outputs going away
+
+`river_output_v1.removed` is followed by a `manage_start`, so unlinking the
+output and clearing per-window state is enough — no `manage_dirty` needed.
+`windows_forget_output` runs before the unlink, because windows hold pointers
+into the struct being freed. It also clears `proposed` on every window: they
+were sized against an output that is about to stop existing.
+
+The compositor exits fullscreen by itself when the output a window is fullscreen
+on is removed, so Satori only corrects its own record.
+
 ## What is not modelled yet
 
-- `proposed` is never cleared. An output resize or a second output leaves
-  existing windows at the old size.
 - Everything pins to `satori->outputs`, the first output. Single monitor by
-  construction.
+  construction: a second output is tracked but never used, and window position
+  comes from the head of the list.
+- An output *resize* still leaves windows at the old size — only removal clears
+  `proposed`.
 - A window arriving before its output's `dimensions` event proposes 0x0, which
   means "client picks", and never corrects itself.
+- No seat listener, so a mid-session seat unplug leaves a dangling `struct seat`.
+- Floating: `inform_maximized` is unconditional for non-fullscreen windows.

@@ -16,8 +16,8 @@ Three layers:
 make test
 ```
 
-Builds `satori` + `satori-asan`, runs each through
-`scripts/test-nested.sh`. Takes ~10s.
+Builds `satori` + `satori-asan`, runs each through `scripts/test-nested.sh`,
+then `scripts/test-exit.sh` once. Takes ~50s.
 
 Runs river under the **headless** wlroots backend (`WLR_BACKENDS=headless`):
 virtual 1280x720 output, no window on screen, outer session untouched. Satori
@@ -37,9 +37,27 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   reach their actions
 - a second `wm: window` after super+return -- the spawn action ran
 - `window: closed` after super+q -- the close intent reached a manage sequence
+- `window: fullscreen on` / `off` -- a client's fullscreen request, honored. The
+  client must start as a normal window and toggle: one started with
+  `--fullscreen` is never proposed, so the re-proposal below happens either way
+- one more `window: propose` after leaving fullscreen -- the re-proposal the
+  protocol requires. Asserted on the proposal, not the `dimensions` event that
+  answers it: on a screen-sized window, maximized and fullscreen dimensions are
+  identical
 - survives the client closing -- no crash in the unlink/free path
 - `wm: finished` + process exits -- clean shutdown
 - no ASan/LSan findings (asan run) -- no leaked proxies
+
+## `scripts/test-exit.sh`
+
+Its own nested river, because `exit_session` destroys the compositor and cannot
+share a session with the assertions above. Asserts `binding: pressed keysym 0x65
+mods 0x41`, `action: exit session`, that the compositor is gone, and that satori
+falls out of its event loop on the closed display rather than spinning.
+
+Separate because the exit binding is the only way out of a river session and
+fails silently when wrong -- a binding on the shifted keysym (`XKB_KEY_E`) is
+created without error and never fires.
 
 Failure prints the log path. Run one binary directly:
 
