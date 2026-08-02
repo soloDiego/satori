@@ -75,14 +75,15 @@ build/keypress: tests/keypress.c $(VK_C) $(VK_H) | build
 		tests/keypress.c $(VK_C) $(PKG_LIBS)
 
 # Includes src/input.c (hence the explicit prerequisite), so link everything
-# except build/input.o.
-build/test-actions: tests/test_actions.c src/input.c src/satori.h build/window.o $(PROTO_O) | build
+# except build/input.o. window.o pulls in output.o for the output lookup.
+build/test-actions: tests/test_actions.c src/input.c src/satori.h build/window.o build/output.o $(PROTO_O) | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(PKG_CFLAGS) -o $@ \
-		tests/test_actions.c build/window.o $(PROTO_O) $(PKG_LIBS)
+		tests/test_actions.c build/window.o build/output.o $(PROTO_O) $(PKG_LIBS)
 
 test: satori asan build/test-actions build/keypress
 	./build/test-actions
 	./scripts/test-nested.sh ./satori
 	./scripts/test-nested.sh ./satori-asan
+	./scripts/test-exit.sh ./satori-asan
 
 .PHONY: all clean asan test install uninstall

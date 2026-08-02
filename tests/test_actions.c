@@ -147,6 +147,64 @@ static void test_close_with_nothing_focused_is_a_no_op(void) {
     CHECK(satori.focused == NULL);
 }
 
+// Losing an output must leave no window pointing at the freed struct, and must
+// mark every window for re-proposal -- they are sized against an output that is
+// about to stop existing.
+static void test_forget_output_drops_references_and_dirties(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    struct output going = {0}, staying = {0};
+    f.satori.outputs = &going;
+    going.next = &staying;
+
+    f.newest.fullscreen = true;
+    f.newest.fs_output = &going;
+    f.middle.fs_output = &staying;
+    f.newest.proposed = f.middle.proposed = f.oldest.proposed = true;
+
+    windows_forget_output(&f.satori, &going);
+
+    // The fullscreen window loses its output; the compositor has already
+    // dropped it out of fullscreen, so we only correct our own record.
+    CHECK(f.newest.fs_output == NULL);
+    CHECK(!f.newest.fullscreen);
+    CHECK(f.newest.fullscreen_dirty);
+
+    // A window pinned to a different output keeps it.
+    CHECK(f.middle.fs_output == &staying);
+    CHECK(!f.middle.fullscreen_dirty);
+
+    // Everything gets re-proposed regardless: the layout changed.
+    CHECK(!f.newest.proposed);
+    CHECK(!f.middle.proposed);
+    CHECK(!f.oldest.proposed);
+}
+
+// A typo'd table is a keybind that silently does nothing, or a spawn that
+// dereferences NULL in /bin/sh. Cheap to rule out.
+static void test_keybind_table_is_well_formed(void) {
+    size_t n = sizeof keybinds / sizeof keybinds[0];
+    CHECK(n > 0);
+
+    bool has_exit = false;
+    for (size_t i = 0; i < n; i++) {
+        CHECK(keybinds[i].action != NULL);
+        CHECK(keybinds[i].modifiers != 0);      // an unmodified key would swallow normal typing
+        if (keybinds[i].action == action_spawn) CHECK(keybinds[i].arg.cmd != NULL);
+        if (keybinds[i].action == action_exit_session) has_exit = true;
+
+        // Duplicate keysym+modifier pairs: which one fires is compositor policy.
+        for (size_t j = i + 1; j < n; j++) {
+            CHECK(!(keybinds[i].keysym == keybinds[j].keysym
+                    && keybinds[i].modifiers == keybinds[j].modifiers));
+        }
+    }
+    // Satori owns every binding in the session; without this one there is no
+    // way to log out.
+    CHECK(has_exit);
+}
+
 int main(void) {
     printf("== satori unit tests\n");
 
@@ -158,11 +216,14 @@ int main(void) {
     test_focus_change_marks_dirty();
     test_close_marks_only_the_focused_window();
     test_close_with_nothing_focused_is_a_no_op();
+    test_forget_output_drops_references_and_dirties();
+    test_keybind_table_is_well_formed();
 
     if (failures) {
         printf("FAIL  %d check(s)\n", failures);
         return 1;
     }
-    printf("  ok    focus cycling, focus dirty tracking, close intent\n\nPASS\n");
+    printf("  ok    focus cycling, focus dirty tracking, close intent\n"
+           "  ok    output removal, keybind table\n\nPASS\n");
     return 0;
 }

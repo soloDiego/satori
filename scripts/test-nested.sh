@@ -18,10 +18,12 @@ LOG="$(mktemp -t satori-test.XXXXXX.log)"
 RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
 RIVER_PID=""
 CLIENT_PID=""
+FS_PID=""
 FAILED=0
 
 cleanup() {
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
+    [ -n "$FS_PID" ] && kill "$FS_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
 }
@@ -112,6 +114,32 @@ if [ -x "$KEYPRESS" ]; then
 
     press super+j
     check "super+j triggers its binding"  'binding: pressed keysym 0x6a'
+
+    # Fullscreen comes from the client, not from us, so it needs a client that
+    # asks. foot has no default fullscreen bind; -o gives it one, and the chord
+    # has no super so it reaches foot rather than satori. It must start as a
+    # normal window: --fullscreen would start it fullscreen, so it would never
+    # be proposed, and the re-proposal below would happen either way.
+    WAYLAND_DISPLAY="$NESTED" foot -o key-bindings.fullscreen=Control+Shift+f \
+        sh -c 'sleep 60' >/dev/null 2>&1 &
+    FS_PID=$!
+    check_count "sees the fullscreen test window" 'wm: window' 3
+
+    press ctrl+shift+f
+    check "honors a fullscreen request"   'window: fullscreen on'
+
+    # Leaving fullscreen must re-propose, or the window keeps the undefined
+    # dimensions the protocol leaves it with. Assert on the proposal itself:
+    # the dimensions event answering it is indistinguishable from the one
+    # entering fullscreen already produced. Counting from here is safe -- the
+    # window was proposed before it went fullscreen, above.
+    props_before="$(grep -cE 'window: propose' "$LOG")"
+    press ctrl+shift+f
+    check "honors leaving fullscreen"     'window: fullscreen off'
+    check_count "re-proposes after fullscreen" 'window: propose' "$((props_before + 1))"
+
+    kill "$FS_PID" 2>/dev/null
+    FS_PID=""
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi
