@@ -20,6 +20,7 @@ struct binding;
 struct satori {
     struct river_window_manager_v1  *wm;
     struct river_xkb_bindings_v1    *xkb;
+    uint32_t wm_version;        // bound version; some requests are version gated
     bool got_unavailable;
     bool finished_received;
 

@@ -44,6 +44,20 @@ static void action_spawn(struct satori *satori, union satori_arg arg) {
     (void) satori;
     spawn(arg.cmd);
 }
+// The only action that is not deferred: exit_session is not window management
+// state, so it carries no sequence constraint. Every client including us is
+// disconnected, and the event loop falls out on the closed display.
+static void action_exit_session(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
+    if (satori->wm_version < 4) {
+        fprintf(stderr, "exit_session needs river_window_manager_v1 v4, have v%u\n",
+                satori->wm_version);
+        return;
+    }
+    fprintf(stderr, "action: exit session\n");
+    river_window_manager_v1_exit_session(satori->wm);
+}
 static void action_close_focused(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
@@ -76,14 +90,26 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
     window_focus(satori, prev);
 }
 
-#define MOD RIVER_SEAT_V1_MODIFIERS_MOD4    // super
+#define MOD  RIVER_SEAT_V1_MODIFIERS_MOD4    // super
+#define SHFT RIVER_SEAT_V1_MODIFIERS_SHIFT
 
 // Fixed for now; the scfg config parser will build this table at startup.
+//
+// Satori owns every binding in the session: river 0.4 has no built-in ones and
+// ships no riverctl. If it is not in this table, there is no way to do it --
+// including leaving the session, hence the exit binding.
+//
+// mod4|mod1 is reserved for the app_id lookup and stays out of this table.
 static const struct keybind keybinds[] = {
-    { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot" } },
+    { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot"   } },
+    { XKB_KEY_space,  MOD, action_spawn, { .cmd = "fuzzel" } },
     { XKB_KEY_q,      MOD, action_close_focused, {0} },
     { XKB_KEY_j,      MOD, action_focus_next,    {0} },
     { XKB_KEY_k,      MOD, action_focus_prev,    {0} },
+
+    // Ends the session with no confirmation. River matches the unshifted
+    // keysym: XKB_KEY_E binds without error and never fires.
+    { XKB_KEY_e, MOD|SHFT, action_exit_session, {0} },
 };
 
 static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {

@@ -22,6 +22,7 @@ static void registry_global(void *data, struct wl_registry *registry,
     if (strcmp(interface, river_window_manager_v1_interface.name) == 0) {
         uint32_t v = clamp_version(version, SATORI_WM_VERSION);
         satori->wm = wl_registry_bind(registry, name, &river_window_manager_v1_interface, v);
+        satori->wm_version = v;
         // The listener goes on immediately: unavailable can be the first and
         // only event on this object, so a roundtrip first would miss it.
         river_window_manager_v1_add_listener(satori->wm, &wm_listener, satori);
