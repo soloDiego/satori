@@ -1,3 +1,6 @@
+PREFIX		?= $(HOME)/.local
+BINDIR		?= $(PREFIX)/bin
+
 CC			:= gcc
 CFLAGS		:= -std=c17 -O2 -g -Wall -Wextra -Wpedantic
 CPPFLAGS	:= -D_POSIX_C_SOURCE=200809L -Ibuild
@@ -40,6 +43,13 @@ build:
 clean:
 	rm -rf build satori satori-asan
 
+# -D creates BINDIR if it is missing. Override with PREFIX= or BINDIR=.
+install: satori
+	install -D -m 755 satori $(BINDIR)/satori
+
+uninstall:
+	rm -f $(BINDIR)/satori
+
 # Separate binary, single compile+link: no object collision with build/*.o.
 asan: $(PROTO_C) $(PROTO_H)
 	$(CC) -std=c17 -O1 -g -fsanitize=address -fno-omit-frame-pointer \
@@ -75,4 +85,4 @@ test: satori asan build/test-actions build/keypress
 	./scripts/test-nested.sh ./satori
 	./scripts/test-nested.sh ./satori-asan
 
-.PHONY: all clean asan test
+.PHONY: all clean asan test install uninstall
