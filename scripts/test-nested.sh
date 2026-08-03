@@ -182,6 +182,24 @@ if [ -x "$KEYPRESS" ]; then
     check_count "super+f toggles back out of fullscreen" \
         'window: fullscreen off' "$((fs_off_before + 1))"
     check_count "re-proposes after the toggle" 'window: propose' "$((props_before + 1))"
+
+    # Float/maximize. Unlike fullscreen there is no separate dirty flag: the
+    # toggle is applied only because it clears `proposed`, so a proposal at the
+    # floating size is the whole proof it worked.
+    #
+    # Mod+Space (fuzzel) is the same keysym, so the mods have to be asserted
+    # too -- 0x41 is shift|mod4, 0x40 alone would match the launcher binding.
+    max_before="$(grep -cE 'window: propose [0-9]+x[0-9]+ maximized' "$LOG")"
+
+    press super+shift+space
+    check "super+shift+space triggers its binding" 'binding: pressed keysym 0x20 mods 0x41'
+    # Two thirds of the 1280x720 headless output, centered. Asserting the size
+    # rather than just the word proves the geometry, not only the flag.
+    check "floats the focused window" 'window: propose 853x480 floating'
+
+    press super+shift+space
+    check_count "toggles back to maximized" \
+        'window: propose [0-9]+x[0-9]+ maximized' "$((max_before + 1))"
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi

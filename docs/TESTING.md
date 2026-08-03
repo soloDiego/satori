@@ -55,6 +55,11 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   because `windows_apply_fullscreen` clears the dirty flag after applying: a
   toggle that sets it only once goes fullscreen and stays there, with no bind
   left to escape it
+- `window: propose 853x480 floating` after super+shift+space, then one more
+  `... maximized` after a second press -- the float toggle round trip. The size
+  is asserted, not just the word: two thirds of the 1280x720 headless output
+  proves the geometry, not only the flag. Mods are asserted too (`0x41`) --
+  Mod+Space is the same keysym and would match otherwise
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
@@ -86,6 +91,13 @@ None of these are reachable by unit tests -- they need a real compositor.
 
 Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
 != pixels correct.
+
+Float *placement* is the sharpest case of that. A floating window is proposed at
+the right size and stacked correctly whether or not `window_position` honors
+`float_x/float_y` -- park every floating window in the top left corner and the
+whole smoke test still passes. `window_position` is split out of `window_place`
+purely so `test_position_follows_float_geometry` can guard it; that unit test is
+the only thing standing between us and that bug.
 
 Also does not catch the layer-shell focus deferral. `fuzzel` takes focus
 exclusively, and river ignores Satori's focus requests outright in that state,
@@ -213,8 +225,9 @@ make build/test-actions && ./build/test-actions
 
 Covers the compositor-free half of the action layer -- focus cycling and its
 wraps, empty and single-window lists, the `focus_dirty` no-op guard, close
-intent, output removal, usable-area fallback, layer-focus deferral. Fake
-`struct window`s on the stack, handles left NULL and never touched.
+intent, the fullscreen and float toggles, float geometry and placement, output
+removal, usable-area fallback, layer-focus deferral. Fake `struct window`s on
+the stack, handles left NULL and never touched.
 
 The layer-focus deferral test runs last on purpose: with the guard removed it
 walks into a request on a NULL proxy and segfaults. That is still red, but it

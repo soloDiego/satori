@@ -77,8 +77,26 @@ static void win_pointer_resize_requested(void *data, struct river_window_v1 *han
 static void win_show_window_menu_requested(void *data, struct river_window_v1 *handle, int32_t x, int32_t y) {
     (void)data; (void)handle; (void)x; (void)y;
 }
-static void win_maximize_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
-static void win_unmaximize_requested(void *data, struct river_window_v1 *handle) { (void)data; (void)handle; }
+// The client's half of the float toggle. A window asking to be unmaximized wants
+// to keep its own size, which is what floating is here, so both events record
+// exactly what the binding records and windows_propose applies either one.
+// Both are followed by a manage_start, so no manage_dirty is needed.
+static void win_maximize_requested(void *data, struct river_window_v1 *handle) {
+    (void) handle;
+
+    struct window *win = data;
+    if (!win->floating) return;     // already maximized; nothing to re-propose
+    win->floating = false;
+    win->proposed = false;
+}
+static void win_unmaximize_requested(void *data, struct river_window_v1 *handle) {
+    (void) handle;
+
+    struct window *win = data;
+    if (win->floating) return;
+    win->floating = true;
+    win->proposed = false;
+}
 // Both fullscreen events are followed by a manage_start, so recording intent is
 // enough -- no manage_dirty needed to get a sequence.
 static void win_fullscreen_requested(void *data, struct river_window_v1 *handle, struct river_output_v1 *output) {
@@ -153,14 +171,42 @@ void window_focus(struct satori *satori, struct window *win) {
     satori->focus_dirty = true;
 }
 
-// Park a window's node at the top left of the output's usable area. Node
-// position is rendering state, which a manage sequence may also touch -- that is
-// what lets the fullscreen exit path call this.
+// Where a window's node goes: its own coordinates when floating, otherwise the
+// top left of the output's usable area. Kept separate from the request below so
+// there is something to unit test -- a placement bug is otherwise invisible to
+// every automated test we have, since headless proves protocol, not pixels.
+void window_position(const struct window *win, const struct output *out,
+        int32_t *x, int32_t *y) {
+    if (win->floating) {
+        *x = win->float_x;
+        *y = win->float_y;
+        return;
+    }
+
+    int32_t width, height;
+    output_usable_area(out, x, y, &width, &height);
+    (void) width; (void) height;    // placement needs the origin only
+}
+
+// Node position is rendering state, which a manage sequence may also touch --
+// that is what lets the fullscreen exit path call this.
 static void window_place(struct window *win, const struct output *out) {
+    int32_t x, y;
+    window_position(win, out, &x, &y);
+    river_node_v1_set_position(win->node, x, y);
+}
+
+// The geometry a window gets the first time it floats: two thirds of the usable
+// area, centered. Nothing moves or resizes a floating window yet, so this is the
+// only geometry it ever gets.
+void window_init_float_geometry(struct window *win, const struct output *out) {
     int32_t x, y, width, height;
     output_usable_area(out, &x, &y, &width, &height);
-    (void) width; (void) height;    // placement needs the origin only
-    river_node_v1_set_position(win->node, x, y);
+
+    win->float_width  = width  * 2 / 3;
+    win->float_height = height * 2 / 3;
+    win->float_x = x + (width  - win->float_width)  / 2;
+    win->float_y = y + (height - win->float_height) / 2;
 }
 
 // The area windows are sized against changed; every one needs re-proposing.
@@ -182,6 +228,12 @@ void windows_forget_output(struct satori *satori, struct output *out) {
             win->fullscreen_dirty = true;
         }
         win->proposed = false;      // sized against an output that no longer exists
+
+        // Float geometry is in the coordinates of the output that is going
+        // away; dropping it re-centers the window on whatever output is left
+        // rather than parking it off screen.
+        win->float_width = 0;
+        win->float_height = 0;
     }
 }
 
@@ -229,16 +281,29 @@ void windows_propose(struct satori *satori) {
         // The server answers every proposal with a dimensions event, which
         // starts another sequence: re-proposing unconditionally never settles.
         if (win->proposed) continue;
-        // The compositor owns a fullscreen window's size, and it is not
-        // maximized. windows_apply_fullscreen clears the flag on the way out.
+        // The compositor owns a fullscreen window's size, and it is neither
+        // maximized nor floating. windows_apply_fullscreen clears the flag on
+        // the way out, so a window toggled while fullscreen is sized then.
         if (win->fullscreen) continue;
-        river_window_v1_propose_dimensions(win->handle, width, height);
-        river_window_v1_inform_maximized(win->handle);
+
+        if (win->floating) {
+            if (win->float_width <= 0 || win->float_height <= 0) {
+                window_init_float_geometry(win, out);
+            }
+            river_window_v1_propose_dimensions(win->handle, win->float_width, win->float_height);
+            river_window_v1_inform_unmaximized(win->handle);
+        } else {
+            river_window_v1_propose_dimensions(win->handle, width, height);
+            river_window_v1_inform_maximized(win->handle);
+        }
         win->proposed = true;
         // A proposal is otherwise invisible: on a screen-sized window the
         // dimensions event that answers it looks the same as the fullscreen
         // one, so a re-proposal cannot be told apart without this.
-        fprintf(stderr, "window: propose %dx%d\n", width, height);
+        fprintf(stderr, "window: propose %dx%d %s\n",
+                win->floating ? win->float_width  : width,
+                win->floating ? win->float_height : height,
+                win->floating ? "floating" : "maximized");
     }
 }
 

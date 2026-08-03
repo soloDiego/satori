@@ -67,6 +67,14 @@ struct window {
     int32_t width, height;
     bool proposed;          // dimensions proposed; the server owes us a dimensions event
     bool close_pending;     // close requested; sent in the next manage sequence
+
+    // Floating windows keep their own geometry instead of filling the usable
+    // area. proposed is the dirty bit for the switch: clear it and the next
+    // manage sequence re-sizes the window and informs it of the new state.
+    bool floating;
+    int32_t float_x, float_y;
+    int32_t float_width, float_height;   // <= 0 until the first float sizes them
+
     bool fullscreen;        // desired state, not necessarily the applied one
     bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
     struct output           *fs_output;     // output to fullscreen on; NULL = the first
@@ -131,6 +139,9 @@ void layer_apply_default_output(struct satori *satori);     // manage sequence
 // window.c
 void window_create(struct satori *satori, struct river_window_v1 *handle);
 void window_focus(struct satori *satori, struct window *win);
+void window_init_float_geometry(struct window *win, const struct output *out);
+void window_position(const struct window *win, const struct output *out,
+        int32_t *x, int32_t *y);
 void windows_invalidate_layout(struct satori *satori);
 void windows_forget_output(struct satori *satori, struct output *out);
 void windows_apply_fullscreen(struct satori *satori);   // manage sequence

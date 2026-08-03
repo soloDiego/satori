@@ -1,6 +1,6 @@
 # Keybinds
 
-Compiled in. Table: `keybinds[]`, `src/input.c:118`. No config file yet.
+Compiled in. Table: `keybinds[]`, `src/input.c:133`. No config file yet.
 
 River 0.4 has no built-in bindings and ships no `riverctl`. This table is every
 binding in the session: a key not listed here does nothing.
@@ -15,6 +15,7 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`).
 | Mod+F | `action_toggle_fullscreen` | — | fullscreens the focused window, or leaves fullscreen |
 | Mod+J | `action_focus_next` | — | next window in list order, wraps |
 | Mod+K | `action_focus_prev` | — | previous window in list order, wraps |
+| Mod+Shift+Space | `action_toggle_floating` | — | floating window keeps its own size and position, or back to maximized |
 | Mod+Shift+E | `action_exit_session` | — | ends the session, no confirmation; every client is disconnected |
 
 `mod4|mod1` is reserved for the planned `Mod+Alt+<letter>` app_id lookup and is
@@ -33,12 +34,22 @@ land in `windows_apply_fullscreen` and a window fullscreened by the client (foot
 bind, a video player) leaves fullscreen on Mod+F. Fullscreen covers the whole
 output including any exclusive zone, so a bar is hidden while it is up.
 
+Mod+Shift+Space pairs the same way with a client's `unmaximize_requested`: both
+set `floating` and clear `proposed`, and `windows_propose` applies either. A
+floating window is sized two thirds of the usable area, centered, the first time
+it floats — nothing moves or resizes it yet, so that is the only geometry it
+gets. Toggling while fullscreen only records the state; it takes effect on
+leaving fullscreen.
+
+Mod+Space and Mod+Shift+Space are the same keysym. River matches the *unshifted*
+keysym, so the modifiers are what tell them apart — `0x40` vs `0x41`.
+
 `action_exit_session` needs `river_window_manager_v1` v4; on an older
-compositor it logs and does nothing (`src/input.c:51`).
+compositor it logs and does nothing (`src/input.c:53`).
 
 ## Action arguments
 
-`satori_action` takes a `union satori_arg` (`src/satori.h:67`), so one action
+`satori_action` takes a `union satori_arg` (`src/satori.h:97`), so one action
 can serve many bindings — `action_spawn` is the reason it exists. Actions that
 ignore it still take it. Members: `cmd` (`const char *`), `u` (`uint32_t`).
 

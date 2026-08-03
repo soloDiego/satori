@@ -64,7 +64,7 @@ action that is not deferred.
 ## Stacking
 
 `windows` is prepended, so it runs newest to oldest, and `windows_render` pushes
-each node to the bottom in turn (`src/window.c:237`). The last one pushed is the
+each node to the bottom in turn (`src/window.c:330`). The last one pushed is the
 oldest, so the newest ends on top. Walking the same list with `place_top` inverts
 it and buries new windows.
 
@@ -103,6 +103,32 @@ client's request events and a binding's `pressed` are followed by a
 
 `fullscreen_dirty` is cleared once applied, so the toggle has to set it on every
 press. Setting it only on the way in strands the window fullscreen.
+
+## Floating, and why it needs no dirty flag of its own
+
+Same two entry points: `win_unmaximize_requested` / `win_maximize_requested`
+(the client asked) and `action_toggle_floating` (Mod+Shift+Space). All three set
+`floating` and clear `proposed`; `windows_propose` is the single place either is
+applied. Both maximize events are followed by a `manage_start`.
+
+Unlike fullscreen there is no `floating_dirty`. **`proposed` is the dirty bit** —
+the toggle is applied only because clearing it makes `windows_propose` run again,
+which re-sizes the window and sends `inform_maximized` or `inform_unmaximized`.
+A toggle that leaves `proposed` set flips the flag and changes nothing on screen.
+
+Geometry:
+
+- Sized once, on the first float: two thirds of the usable area, centered
+  (`window_init_float_geometry`). `float_width <= 0` is the "unset" marker.
+- `window_position` is split out of `window_place` so the choice between float
+  coordinates and the usable-area origin is unit-testable. It has to be —
+  headless tests prove the protocol, not pixels, so a floating window parked in
+  the corner passes every integration assertion.
+- `windows_forget_output` zeroes the float size along with `proposed`: the
+  coordinates belong to the output that is going away, and keeping them parks
+  the window off screen on whatever output is left.
+- A window toggled while fullscreen only records the state. `windows_propose`
+  skips fullscreen windows, so it is sized on the way out.
 
 ## Layer shell
 

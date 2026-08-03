@@ -191,6 +191,102 @@ static void test_toggle_fullscreen_with_nothing_focused_is_a_no_op(void) {
     CHECK(satori.focused == NULL);
 }
 
+// Floating is a round trip like fullscreen, but proposed is the dirty bit: the
+// toggle is only applied because windows_propose re-runs, so a toggle that
+// leaves proposed set changes nothing on screen.
+static void test_toggle_floating_marks_only_the_focused_window(void) {
+    struct fixture f;
+    fixture_init(&f);
+    f.satori.focused = &f.middle;
+    f.newest.proposed = f.middle.proposed = f.oldest.proposed = true;
+
+    action_toggle_floating(&f.satori, NOARG);
+    CHECK(f.middle.floating);
+    CHECK(!f.middle.proposed);
+    CHECK(!f.newest.floating);
+    CHECK(f.newest.proposed);       // untouched windows keep their proposal
+    CHECK(f.oldest.proposed);
+
+    // The sequence proposed it and set the flag again; toggling back must clear it.
+    f.middle.proposed = true;
+    action_toggle_floating(&f.satori, NOARG);
+    CHECK(!f.middle.floating);
+    CHECK(!f.middle.proposed);
+}
+
+static void test_toggle_floating_with_nothing_focused_is_a_no_op(void) {
+    struct satori satori = {0};
+    action_toggle_floating(&satori, NOARG);
+    CHECK(satori.focused == NULL);
+}
+
+// The first float has to land somewhere sensible: inside the usable area, not
+// at the origin and not off the bottom of a screen a bar has shortened.
+static void test_float_geometry_centers_inside_the_usable_area(void) {
+    struct window win = {0};
+    struct output out = { .x = 0, .y = 0, .width = 1920, .height = 1080 };
+
+    out.has_area = true;            // a 40px bar at the top
+    out.area_x = 0; out.area_y = 40;
+    out.area_width = 1920; out.area_height = 1040;
+
+    window_init_float_geometry(&win, &out);
+
+    CHECK(win.float_width == 1280 && win.float_height == 693);
+    CHECK(win.float_x == 320);
+    CHECK(win.float_y == 40 + (1040 - 693) / 2);
+
+    // Centered means it fits: no edge lands outside the usable area.
+    CHECK(win.float_x >= out.area_x);
+    CHECK(win.float_y >= out.area_y);
+    CHECK(win.float_x + win.float_width  <= out.area_x + out.area_width);
+    CHECK(win.float_y + win.float_height <= out.area_y + out.area_height);
+}
+
+// A floating window has to be positioned at its own coordinates, not parked at
+// the usable-area origin like a maximized one. This is the only guard on that:
+// the smoke test sees the proposal, never the position, so a floating window
+// correctly sized and stacked in the top left corner passes everything else.
+static void test_position_follows_float_geometry(void) {
+    struct output out = { .x = 0, .y = 0, .width = 1920, .height = 1080 };
+    out.has_area = true;            // a 40px bar at the top
+    out.area_x = 0; out.area_y = 40;
+    out.area_width = 1920; out.area_height = 1040;
+
+    struct window win = {0};
+    int32_t x, y;
+
+    window_position(&win, &out, &x, &y);
+    CHECK(x == 0 && y == 40);       // maximized: the usable-area origin
+
+    win.floating = true;
+    win.float_x = 320; win.float_y = 213;
+    window_position(&win, &out, &x, &y);
+    CHECK(x == 320 && y == 213);
+}
+
+// Float coordinates belong to the output they were computed on. Keeping them
+// across a removal parks the window off screen on whatever output is left.
+static void test_forget_output_drops_float_geometry(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    struct output going = {0};
+    f.satori.outputs = &going;
+
+    f.newest.floating = true;
+    f.newest.float_x = 2200; f.newest.float_y = 300;
+    f.newest.float_width = 800; f.newest.float_height = 600;
+
+    windows_forget_output(&f.satori, &going);
+
+    // Still floating -- only the geometry is stale, and it is re-derived on the
+    // next proposal because the size is what marks it unset.
+    CHECK(f.newest.floating);
+    CHECK(f.newest.float_width == 0);
+    CHECK(f.newest.float_height == 0);
+}
+
 // Losing an output must leave no window pointing at the freed struct, and must
 // mark every window for re-proposal -- they are sized against an output that is
 // about to stop existing.
@@ -325,6 +421,11 @@ int main(void) {
     test_toggle_fullscreen_marks_only_the_focused_window();
     test_toggle_fullscreen_leaves_a_client_fullscreened_window();
     test_toggle_fullscreen_with_nothing_focused_is_a_no_op();
+    test_toggle_floating_marks_only_the_focused_window();
+    test_toggle_floating_with_nothing_focused_is_a_no_op();
+    test_float_geometry_centers_inside_the_usable_area();
+    test_position_follows_float_geometry();
+    test_forget_output_drops_float_geometry();
     test_forget_output_drops_references_and_dirties();
     test_usable_area_falls_back_to_the_output();
     test_invalidate_layout_reproposes_everything();
@@ -337,6 +438,7 @@ int main(void) {
     }
     printf("  ok    focus cycling, focus dirty tracking, close intent\n"
            "  ok    fullscreen toggle intent\n"
+           "  ok    float toggle intent, float geometry\n"
            "  ok    output removal, usable area, layer focus deferral\n"
            "  ok    keybind table\n\nPASS\n");
     return 0;

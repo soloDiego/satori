@@ -78,6 +78,21 @@ static void action_toggle_fullscreen(struct satori *satori, union satori_arg arg
     win->fullscreen_dirty = true;
     win->fs_output = NULL;      // no preference; apply time falls back to the first output
 }
+// The other half of the default layout: a floating window keeps its own size and
+// position instead of filling the usable area. Same shape as the fullscreen
+// toggle -- record the intent a client's unmaximize_requested records, and let
+// windows_propose be the single place either one is applied.
+static void action_toggle_floating(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
+    struct window *win = satori->focused;
+    if (!win) return;
+
+    win->floating = !win->floating;
+    // proposed is the dirty bit here: clearing it is what makes the next manage
+    // sequence re-size the window and inform it of the new state.
+    win->proposed = false;
+}
 static void action_focus_next(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
@@ -122,6 +137,10 @@ static const struct keybind keybinds[] = {
     { XKB_KEY_f,      MOD, action_toggle_fullscreen, {0} },
     { XKB_KEY_j,      MOD, action_focus_next,    {0} },
     { XKB_KEY_k,      MOD, action_focus_prev,    {0} },
+
+    // Float/maximize toggle. Shift+space is still the space keysym: river
+    // matches the unshifted one, so this does not collide with Mod+Space above.
+    { XKB_KEY_space, MOD|SHFT, action_toggle_floating, {0} },
 
     // Ends the session with no confirmation. River matches the unshifted
     // keysym: XKB_KEY_E binds without error and never fires.
