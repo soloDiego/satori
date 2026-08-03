@@ -68,6 +68,20 @@ each node to the bottom in turn (`src/window.c:237`). The last one pushed is the
 oldest, so the newest ends on top. Walking the same list with `place_top` inverts
 it and buries new windows.
 
+Then the focused window is raised with `place_top`. **Unconditionally** — the
+walk above re-asserts newest-on-top on every render and would bury it again on
+the next one.
+
+Without the raise, stacking follows creation order alone and focus does not
+affect it. That is not a cosmetic bug: every window is maximized, so cycling
+moves the keyboard focus to a window that is completely hidden behind the newest
+one, and keystrokes land in a window you cannot see. It reads as "Mod+J does
+nothing" — the focus request was going out correctly the whole time.
+
+`satori->raised` exists only to log the raise on change; it is never
+dereferenced. `win_closed` still clears it, so a later window allocated at the
+same address cannot compare equal to a dead one.
+
 ## Outputs going away
 
 `river_output_v1.removed` is followed by a `manage_start`, so unlinking the

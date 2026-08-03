@@ -25,6 +25,7 @@ static void win_closed(void *data, struct river_window_v1 *handle) {
     if (satori->focused == win) {
         window_focus(satori, satori->windows);
     }
+    if (satori->raised == win) satori->raised = NULL;
 
     river_node_v1_destroy(win->node);
     river_window_v1_destroy(win->handle);
@@ -263,6 +264,21 @@ void windows_render(struct satori *satori) {
         }
         river_node_v1_place_bottom(win->node);
     }
+
+    // Raise the focused window. Without this, stacking follows creation order
+    // only: cycling moves the keyboard focus to a window that stays buried, and
+    // since every window is maximized it is invisible -- keystrokes land in a
+    // window you cannot see. Unconditional, because the walk above re-asserts
+    // newest-on-top every render and would bury it again.
+    if (satori->focused && satori->focused->node) {
+        river_node_v1_place_top(satori->focused->node);
+        // Logged on change only: this runs every render, and the smoke test
+        // needs a signal that the raise happened at all.
+        if (satori->raised != satori->focused) {
+            satori->raised = satori->focused;
+            fprintf(stderr, "window: raised\n");
+        }
+    }
 }
 
 void windows_destroy_all(struct satori *satori) {
@@ -278,4 +294,5 @@ void windows_destroy_all(struct satori *satori) {
     }
     satori->windows = NULL;
     satori->focused = NULL;
+    satori->raised = NULL;
 }

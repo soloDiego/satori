@@ -34,6 +34,10 @@ struct satori {
 
     struct window   *focused;       // NULL = nothing focused
     bool            focus_dirty;    // focus must be re-applied in the next manage sequence
+    // Last window windows_render raised, for logging only -- the raise itself is
+    // unconditional. Never dereferenced, but cleared when the window closes so
+    // it cannot compare equal to a later window at the same address.
+    struct window   *raised;
     bool            default_output_dirty;   // the layer shell default output needs re-setting
 };
 

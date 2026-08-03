@@ -38,6 +38,11 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   reach their actions
 - a second `wm: window` after super+return -- the spawn action ran
 - `window: closed` after super+q -- the close intent reached a manage sequence
+- one more `window: raised` after super+j -- cycling raises, not just re-focuses.
+  Needs a second window spawned first: with one window open the wrap lands on the
+  already-focused window and `window_focus` correctly no-ops. Asserts the raise
+  was *decided*, not that the compositor restacked -- stacking is still only
+  checkable by eye
 - `window: fullscreen on` / `off` -- a client's fullscreen request, honored. The
   client must start as a normal window and toggle: one started with
   `--fullscreen` is never proposed, so the re-proposal below happens either way

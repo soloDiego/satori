@@ -20,7 +20,12 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`).
 deliberately absent from this table.
 
 List order is newest first. Nothing is focused when no window is open; Mod+J/K
-then focus the newest.
+then focus the newest. Focusing also raises: without that the window you cycle
+to stays buried under the newest one, and since everything is maximized it is
+invisible.
+
+With one window open, Mod+J/K are no-ops — the wrap lands on the window that is
+already focused, and `window_focus` returns early when focus is unchanged.
 
 `action_exit_session` needs `river_window_manager_v1` v4; on an older
 compositor it logs and does nothing (`src/input.c:51`).

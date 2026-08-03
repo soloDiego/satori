@@ -121,8 +121,21 @@ if [ -x "$KEYPRESS" ]; then
     check "super+q triggers its binding"  'binding: pressed keysym 0x71'
     check "super+q closes the focused window" 'window: closed'
 
+    # Cycling has to raise, not just re-focus. Every window is maximized, so a
+    # focused window that is not on top is invisible and keystrokes land in a
+    # window you cannot see -- which is exactly how this looked broken.
+    #
+    # super+q above left one window, and focus_next on a single window is
+    # correctly a no-op, so cycling needs a second one back.
+    press super+return
+    check_count "spawns a window to cycle to" 'wm: window' 3
+    wait_for 'window: raised' 5
+    sleep 0.5   # let the new window's own raise land before counting
+    raises_before="$(grep -cE 'window: raised' "$LOG")"
     press super+j
     check "super+j triggers its binding"  'binding: pressed keysym 0x6a'
+    check_count "cycling raises the newly focused window" \
+        'window: raised' "$((raises_before + 1))"
 
     # Fullscreen comes from the client, not from us, so it needs a client that
     # asks. foot has no default fullscreen bind; -o gives it one, and the chord
@@ -132,7 +145,7 @@ if [ -x "$KEYPRESS" ]; then
     WAYLAND_DISPLAY="$NESTED" foot -o key-bindings.fullscreen=Control+Shift+f \
         sh -c 'sleep 60' >/dev/null 2>&1 &
     FS_PID=$!
-    check_count "sees the fullscreen test window" 'wm: window' 3
+    check_count "sees the fullscreen test window" 'wm: window' 4
 
     press ctrl+shift+f
     check "honors a fullscreen request"   'window: fullscreen on'
