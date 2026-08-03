@@ -60,6 +60,10 @@ action that is not deferred.
 - Shutdown while active: `stop`, wait for `finished`, then `destroy`. Never just
   disconnect. Shutdown after `unavailable`: `destroy` only — `stop` from a
   window manager that was never active is an error.
+- `unavailable` also has to *end the loop*. It is the first and only event that
+  object gets, so nothing will ever wake us again; the event loop checks it
+  right after `wl_display_prepare_read` and cancels the pending read on the way
+  out (`src/main.c:88`). Without that check satori sits in `poll` forever.
 
 ## Stacking
 

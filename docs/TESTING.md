@@ -30,6 +30,9 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
 - `bound river_window_manager_v1 v4` -- active WM
 - `bound river_xkb_bindings_v1 vN` -- keybind global present
 - `bound river_layer_shell_v1 vN` -- without it river closes every layer surface
+- a second instance launched onto the same display logs `wm: unavailable`, exits
+  **on its own**, and logs no error. The other branch of binding; see
+  "Test: unavailable path" below for why exiting is the interesting half
 - `wm: output`, `wm: seat`, `layer: default output`
 - `wm: window` -- client tracked
 - `window: WxH` -- the `dimensions` event; proof `propose_dimensions` landed
@@ -204,12 +207,19 @@ Never `pkill river` (kills your main session too).
 
 ## Test: unavailable path
 
+Covered by `make test` now -- a second instance is launched onto the nested
+display and asserted on. Manual version:
+
 ```sh
 ./satori
 ```
 
 Connects to the outer river; WM slot already taken -> `unavailable`.
-Expect: `wm: unavailable`, clean exit, no `stop` sent.
+Expect: `wm: unavailable`, exits **on its own** within a second, no `stop` sent.
+
+Exiting is the assertion. `unavailable` is the first and only event that object
+gets, so nothing will ever wake the loop again; until 2026-08-02 satori idled in
+`poll` forever here and left a stray process behind on every occurrence.
 
 ## Recovery
 

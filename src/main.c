@@ -85,6 +85,17 @@ int main(void) {
             wl_display_dispatch_pending(display);
         }
 
+        // Another WM holds the slot. unavailable is the first and only event
+        // that object ever gets, so there is nothing left to wait for -- without
+        // this we poll forever on a display that will never speak again. The
+        // check sits after prepare_read so it catches the event whether it was
+        // dispatched above or at the bottom of the previous iteration; the
+        // pending read has to be cancelled before leaving.
+        if (satori.got_unavailable) {
+            wl_display_cancel_read(display);
+            break;
+        }
+
         wl_display_flush(display);
 
         struct pollfd pfds[2] = {

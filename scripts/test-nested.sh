@@ -22,9 +22,12 @@ RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
 LAYER_PID=""
+SECOND_PID=""
+SECOND_LOG="$(mktemp -t satori-second.XXXXXX.log)"
 FAILED=0
 
 cleanup() {
+    [ -n "$SECOND_PID" ] && kill "$SECOND_PID" 2>/dev/null
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     [ -n "$FS_PID" ] && kill "$FS_PID" 2>/dev/null
     [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
@@ -97,6 +100,49 @@ check "binds the xkb bindings global"  'bound river_xkb_bindings_v1 v[0-9]+'
 # Without this bind river closes every layer surface, so bars and launchers
 # never map -- and the client gives no error, it just never appears.
 check "binds the layer shell global"   'bound river_layer_shell_v1 v[0-9]+'
+
+# The other branch of binding. Only one WM can be active, so a second satori on
+# the same display is told `unavailable` and has to leave on its own -- it gets
+# no further events and nothing will ever wake it. It also must NOT send `stop`,
+# which is a protocol error when we were never the active WM.
+WAYLAND_DISPLAY="$NESTED" "$BIN" 2>"$SECOND_LOG" &
+SECOND_PID=$!
+
+for _ in {1..50}; do
+    grep -qE 'wm: unavailable' "$SECOND_LOG" && break
+    sleep 0.1
+done
+if grep -qE 'wm: unavailable' "$SECOND_LOG"; then
+    echo "  ok    a second instance is told the slot is taken"
+else
+    echo "  FAIL  a second instance is told the slot is taken (see $SECOND_LOG)"
+    FAILED=1
+fi
+
+# No signal is sent: falling out of the loop is the whole assertion. Before this
+# was fixed it idled in poll forever and left a stray process on every login.
+for _ in {1..50}; do
+    kill -0 "$SECOND_PID" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "$SECOND_PID" 2>/dev/null; then
+    echo "  FAIL  a second instance exits on its own (still running after 5s)"
+    FAILED=1
+    kill "$SECOND_PID" 2>/dev/null
+else
+    echo "  ok    a second instance exits on its own"
+fi
+SECOND_PID=""
+
+# Catches both a `stop` on the inactive path (river answers with a protocol
+# error) and, under satori-asan, anything leaked on the way out.
+if grep -qE 'error|ERROR' "$SECOND_LOG"; then
+    echo "  FAIL  a second instance exits cleanly (errors in $SECOND_LOG)"
+    FAILED=1
+else
+    echo "  ok    a second instance exits cleanly"
+fi
+
 check "sees an output"                 'wm: output'
 check "sees a seat"                    'wm: seat'
 # Layer surfaces that name no output need a default, or they have nowhere to go.
