@@ -12,6 +12,8 @@ BIN="${1:-./satori}"
 [ -x "$BIN" ] || { echo "no such binary: $BIN (run make)" >&2; exit 1; }
 BIN="$(realpath "$BIN")"
 NAME="$(basename "$BIN")"
+# shellcheck source=lib-nested.sh
+. "$(dirname "$0")/lib-nested.sh"
 
 KEYPRESS="$(realpath "$(dirname "$0")/../build/keypress")"
 [ -x "$KEYPRESS" ] || { echo "no $KEYPRESS (run make)" >&2; exit 1; }
@@ -19,12 +21,13 @@ KEYPRESS="$(realpath "$(dirname "$0")/../build/keypress")"
 LOG="$(mktemp -t satori-exit.XXXXXX.log)"
 RIVER_PID=""
 CLIENT_PID=""
+NESTED=""
 FAILED=0
 
 cleanup() {
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
-    pkill -x "$NAME" 2>/dev/null    # never -f: river's argv contains $BIN
+    nested_kill TERM    # scoped to $NESTED; by name it would hit the live session
     wait 2>/dev/null
 }
 trap cleanup EXIT
@@ -91,9 +94,11 @@ else
 fi
 
 # Satori must fall out of its event loop on the closed display, not spin.
-for _ in {1..50}; do pgrep -x "$NAME" >/dev/null || break; sleep 0.1; done
-if pgrep -x "$NAME" >/dev/null; then
-    echo "  FAIL  satori still running $(ps -o pcpu= -C "$NAME" | tr -d ' ')% cpu"
+# River is gone by now, so the nested instance has been reparented to init --
+# which is why nested_pids matches on the environment, not on ancestry.
+for _ in {1..50}; do nested_running || break; sleep 0.1; done
+if nested_running; then
+    echo "  FAIL  satori still running $(ps -o pcpu= -p "$(nested_pids | head -1)" | tail -1 | tr -d ' ')% cpu"
     FAILED=1
 else
     echo "  ok    satori exited with the session"

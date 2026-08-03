@@ -74,6 +74,11 @@ no bindings, no focus changes, new windows never appear.
 Never `pkill -f satori`: river's argv contains satori's path when it is the
 `-c` command, so `-f` signals the compositor too. `pkill -x`.
 
+`pkill -x satori` cuts the other way too — it matches *every* satori, including
+one running under a nested test river. That is the right thing here, where the
+live session is the target, and the wrong thing in a test script: see
+`scripts/lib-nested.sh` and [TESTING.md](TESTING.md).
+
 Set up SSH before the first TTY session. It is the only recovery channel that
 does not depend on the compositor responding.
 

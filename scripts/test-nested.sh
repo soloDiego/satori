@@ -10,9 +10,11 @@ set -uo pipefail
 BIN="${1:-./satori}"
 [ -x "$BIN" ] || { echo "no such binary: $BIN (run make)" >&2; exit 1; }
 BIN="$(realpath "$BIN")"
-# Match satori by exact process name: river's own argv contains $BIN (it is the
-# -c init command), so a `pkill -f "$BIN"` would signal the compositor too.
 NAME="$(basename "$BIN")"
+# nested_pids / nested_running / nested_kill: never signal satori by name alone,
+# it would hit the live session's window manager. See the file for why.
+# shellcheck source=lib-nested.sh
+. "$(dirname "$0")/lib-nested.sh"
 
 LOG="$(mktemp -t satori-test.XXXXXX.log)"
 RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
@@ -148,7 +150,7 @@ fi
 kill "$CLIENT_PID" 2>/dev/null
 CLIENT_PID=""
 sleep 1
-if pgrep -x "$NAME" >/dev/null; then
+if nested_running; then
     echo "  ok    survives the client closing"
 else
     echo "  FAIL  satori died when the client closed"
@@ -156,10 +158,10 @@ else
 fi
 
 # Clean shutdown: SIGINT -> stop -> finished -> exit.
-pkill -INT -x "$NAME"
+nested_kill INT
 check "shuts down cleanly on SIGINT"   'wm: finished'
 sleep 1
-if pgrep -x "$NAME" >/dev/null; then
+if nested_running; then
     echo "  FAIL  satori still running after SIGINT"
     FAILED=1
 else

@@ -94,10 +94,29 @@ The protocol XML is vendored at `tests/virtual-keyboard-unstable-v1.xml`
 This covers the wire from a real key event to an action running. What the action
 then does is covered by the unit tests.
 
-### Gotcha
+### Gotcha: never signal satori by name
 
-Never match satori with `pkill -f`. River's argv contains satori's path (it is
-the `-c` init command), so `-f` signals the compositor too. Use `pkill -x satori`.
+Satori is the developer's real window manager, so the instance under test and
+the live session have the same process name. **`pkill -x satori` matches both**
+— `make test` used to SIGINT the desktop it was running on, which looks like a
+clean shutdown in the log and nothing like a test bug. `pkill -f` is worse:
+river's argv contains satori's path when it is the `-c` command, so `-f` signals
+the compositor too.
+
+`scripts/lib-nested.sh` is the only correct way to find it. River exports
+`WAYLAND_DISPLAY` to its `-c` child, so the nested instance is the one whose
+`/proc/PID/environ` names the nested socket — which still holds after river
+exits and the process is reparented, the case `test-exit.sh` needs.
+
+```sh
+. scripts/lib-nested.sh   # needs $NAME and $NESTED in scope
+nested_pids               # PIDs belonging to this nested compositor
+nested_running            # true while it is alive
+nested_kill INT           # signal only it
+```
+
+With `$NESTED` unset it deliberately matches nothing: leaking a test process is
+cheaper than killing the session.
 
 ## Manual: visible nested river
 
