@@ -1,7 +1,7 @@
 # Keybinds
 
-Compiled in. Two tables: `keybinds[]` (`src/input.c:149`) and `app_keybinds[]`
-(`src/input.c:170`). No config file yet.
+Compiled in. Two tables: `keybinds[]` (`src/input.c:164`) and `app_keybinds[]`
+(`src/input.c:205`). No config file yet.
 
 River 0.4 has no built-in bindings and ships no `riverctl`. These tables are
 every binding in the session: a key not listed here does nothing.
@@ -21,7 +21,7 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`), Alt = `MOD1`.
 | Mod+Alt+A … Mod+Alt+Z | `action_focus_app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
 
 The 26 letter bindings are generated, not typed out (`app_keybinds_init`,
-`src/input.c:180`); `mod4|mod1` carries nothing else, so the whole `Mod+<letter>`
+`src/input.c:215`); `mod4|mod1` carries nothing else, so the whole `Mod+<letter>`
 space stays free for ordinary bindings.
 
 Which window `Mod+Alt+<letter>` picks:
@@ -67,6 +67,45 @@ Mod+Alt+&lt;letter&gt; is a no-op when the only match is the window already focu
 the ring comes back to it and `window_focus` returns early. Same shape as Mod+J/K
 with one window open.
 
+## Media keys
+
+Unmodified, on the ThinkPad's printed keycaps. No Fn needed with the default
+Fn-lock; these are the F1–F6 row's primary function.
+
+| Binding | Keysym | Runs |
+| --- | --- | --- |
+| Mute | `XF86AudioMute` | `wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle` |
+| Volume down | `XF86AudioLowerVolume` | `wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-` |
+| Volume up | `XF86AudioRaiseVolume` | `wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ -l 1.0` |
+| Mic mute | `XF86AudioMicMute` | `wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle` |
+| Brightness down | `XF86MonBrightnessDown` | sysfs write, −5% |
+| Brightness up | `XF86MonBrightnessUp` | sysfs write, +5% |
+
+**These are the only bindings with no modifier**, and the only ones that may be.
+An unmodified letter would be unusable everywhere in the session; XF86 keysyms
+produce no text, so grabbing them swallows nothing. `test_media_keys_are_bound_unmodified`
+enforces both halves — media keys bind at `0`, everything else must carry a
+modifier.
+
+One step is 5% per press. **Holding a key does not ramp**: the xkb-bindings
+protocol does not auto-repeat, and `stop_repeat` exists precisely because
+repeating is the window manager's job. Not implemented — it needs a timerfd in
+the poll loop.
+
+`-l 1.0` caps volume at 100%. Without it `wpctl` boosts past unity, which clips
+rather than gets louder.
+
+Brightness writes `/sys/class/backlight/intel_backlight/brightness` directly
+(`BRIGHTNESS_CMD`, `src/input.c:148`) rather than shelling out to
+`brightnessctl` or `light` — neither is installed, and the file is group-writable
+to `video`. The floor of 1% of max is load-bearing: a backlight at 0 is a black
+screen, and the key that raises it again is one you can no longer see. The
+device path is hardcoded to this machine's `intel_backlight`.
+
+Media keys are `action_spawn` like any other command binding, so they carry no
+sequence constraint and satori does not track volume or brightness state — the
+key runs a command and the tool owns the state.
+
 ## Action arguments
 
 `satori_action` takes a `union satori_arg` (`src/satori.h:97`), so one action
@@ -96,6 +135,9 @@ usable in bindings.
 always the lowercase form (`XKB_KEY_q`, not `XKB_KEY_Q`); adding shift means
 setting the shift bit, not changing the keysym.
 
+XF86 keysyms occupy `0x1008ff00`–`0x1008ffff`. That range is what
+`is_media_key` tests to allow the unmodified exception.
+
 River matches the unshifted keysym. `XKB_KEY_E` with the shift bit binds
 successfully and then **never fires** — no error, no log line, the key simply
 does nothing. `scripts/test-exit.sh` asserts the exact pair Mod+Shift+E produces
@@ -106,8 +148,8 @@ does nothing. `scripts/test-exit.sh` asserts the exact pair Mod+Shift+E produces
 - One binding per keysym+modifier pair per seat. Duplicates: which one fires is
   compositor policy.
 - Bindings are created per seat, at `wm: seat`, and enabled in the next manage
-  sequence (`src/input.c:245`). A key pressed before that reaches the focused
+  sequence (`src/input.c:280`). A key pressed before that reaches the focused
   client instead.
-- 34 bindings per seat: 8 in `keybinds[]`, 26 letters.
+- 40 bindings per seat: 14 in `keybinds[]`, 26 letters.
 - Actions run outside a manage sequence and must not touch window management
   state. See [SEQUENCES.md](SEQUENCES.md).

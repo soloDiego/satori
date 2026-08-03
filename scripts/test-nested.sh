@@ -291,6 +291,23 @@ if [ -x "$KEYPRESS" ]; then
         FAILED=1
     fi
 
+    # An unmodified XF86 keysym is the one genuinely new risk in the media
+    # bindings: a keysym that binds without error and never fires is exactly the
+    # XKB_KEY_E/XKB_KEY_e failure, and it is silent. This proves dispatch only.
+    #
+    # Mic mute is the deliberate choice of key. The other five change the real
+    # sink volume or the real backlight of whoever runs `make test` -- the effect
+    # is external to satori and not idempotent. Toggling the mic twice is exactly
+    # reversible with no clamping edge cases, so the suite leaves no trace. What
+    # the keys actually run is pinned in test_actions.c instead.
+    press micmute
+    check "an unmodified media key triggers its binding" \
+        'binding: pressed keysym 0x1008ffb2 mods 0x0'
+
+    press micmute   # restore the mic to the state the suite found it in
+    check_count "the media binding fires on every press" \
+        'binding: pressed keysym 0x1008ffb2 mods 0x0' 2
+
     kill "$APP_PID" 2>/dev/null
     APP_PID=""
     check_count "sees the app-lookup test window close" 'window: closed' 3

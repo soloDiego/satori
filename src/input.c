@@ -137,6 +137,21 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
 #define ALT  RIVER_SEAT_V1_MODIFIERS_MOD1
 #define SHFT RIVER_SEAT_V1_MODIFIERS_SHIFT
 
+// Brightness is written straight to sysfs rather than shelled out to
+// brightnessctl or light: neither is installed, and the file is group-writable
+// to `video`, which the user is in. Same rule that dropped the screenshot
+// binding -- do not ship a binding to software that is not there.
+//
+// The floor of 1% of max is load-bearing. A backlight at 0 is a black screen,
+// and the key that raises it again is one you can no longer see.
+#define BACKLIGHT_DIR "/sys/class/backlight/intel_backlight"
+#define BRIGHTNESS_CMD(op)                                     \
+    "d=" BACKLIGHT_DIR "; "                                    \
+    "m=$(cat $d/max_brightness); c=$(cat $d/brightness); "     \
+    "lo=$((m/100+1)); n=$((c " op " m/20)); "                  \
+    "[ $n -gt $m ] && n=$m; [ $n -lt $lo ] && n=$lo; "         \
+    "echo $n > $d/brightness"
+
 // Fixed for now; the scfg config parser will build this table at startup.
 //
 // Satori owns every binding in the session: river 0.4 has no built-in ones and
@@ -161,6 +176,26 @@ static const struct keybind keybinds[] = {
     // Ends the session with no confirmation. River matches the unshifted
     // keysym: XKB_KEY_E binds without error and never fires.
     { XKB_KEY_e, MOD|SHFT, action_exit_session, {0} },
+
+    // The XF86 media keys, bound with NO modifier -- the one place in this table
+    // where that is correct. These keysyms produce no text, so grabbing them
+    // cannot swallow normal typing, which is the entire reason every other
+    // binding needs a modifier. The keycaps are printed with these functions.
+    //
+    // Volume goes through wpctl: wireplumber is the session manager here. The
+    // `-l 1.0` on raise is a cap at 100% -- without it wpctl boosts past unity
+    // and the result is clipping, not loudness.
+    { XKB_KEY_XF86AudioMute, 0, action_spawn,
+        { .cmd = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" } },
+    { XKB_KEY_XF86AudioLowerVolume, 0, action_spawn,
+        { .cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" } },
+    { XKB_KEY_XF86AudioRaiseVolume, 0, action_spawn,
+        { .cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ -l 1.0" } },
+    { XKB_KEY_XF86AudioMicMute, 0, action_spawn,
+        { .cmd = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" } },
+
+    { XKB_KEY_XF86MonBrightnessDown, 0, action_spawn, { .cmd = BRIGHTNESS_CMD("-") } },
+    { XKB_KEY_XF86MonBrightnessUp,   0, action_spawn, { .cmd = BRIGHTNESS_CMD("+") } },
 };
 
 // Mod+Alt+<letter>, one binding per letter. Generated rather than typed out:

@@ -33,6 +33,11 @@ static const struct { const char *name; uint32_t code; } key_names[] = {
     { "p", 25 }, { "q", 16 }, { "r", 19 }, { "s", 31 }, { "t", 20 },
     { "u", 22 }, { "v", 47 }, { "w", 17 }, { "x", 45 }, { "y", 21 },
     { "z", 44 },
+
+    // Media keys. The default xkb keymap (evdev rules, pc model) maps these to
+    // the XF86 keysyms satori binds, so injecting the evdev code is enough.
+    { "mute", 113 }, { "voldown", 114 }, { "volup", 115 },
+    { "brightdown", 224 }, { "brightup", 225 }, { "micmute", 248 },
 };
 
 struct state {

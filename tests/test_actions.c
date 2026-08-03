@@ -540,6 +540,13 @@ static void test_app_keybind_table_covers_every_letter(void) {
     }
 }
 
+// The XF86 block, 0x1008ff00-0x1008ffff: media and laptop function keys. They
+// produce no text, which is what makes them the one safe thing to bind with no
+// modifier at all.
+static bool is_media_key(uint32_t keysym) {
+    return (keysym & 0xffffff00) == 0x1008ff00;
+}
+
 // A typo'd table is a keybind that silently does nothing, or a spawn that
 // dereferences NULL in /bin/sh. Cheap to rule out.
 static void test_keybind_table_is_well_formed(void) {
@@ -549,7 +556,10 @@ static void test_keybind_table_is_well_formed(void) {
     bool has_exit = false;
     for (size_t i = 0; i < n; i++) {
         CHECK(keybinds[i].action != NULL);
-        CHECK(keybinds[i].modifiers != 0);      // an unmodified key would swallow normal typing
+        // An unmodified key swallows normal typing -- unless it is a media key,
+        // which types nothing. Binding an unmodified letter would make that
+        // letter unusable everywhere in the session.
+        CHECK(keybinds[i].modifiers != 0 || is_media_key(keybinds[i].keysym));
         if (keybinds[i].action == action_spawn) CHECK(keybinds[i].arg.cmd != NULL);
         if (keybinds[i].action == action_exit_session) has_exit = true;
 
@@ -562,6 +572,61 @@ static void test_keybind_table_is_well_formed(void) {
     // Satori owns every binding in the session; without this one there is no
     // way to log out.
     CHECK(has_exit);
+}
+
+static const struct keybind *find_keybind(uint32_t keysym, uint32_t modifiers) {
+    for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
+        if (keybinds[i].keysym == keysym && keybinds[i].modifiers == modifiers) {
+            return &keybinds[i];
+        }
+    }
+    return NULL;
+}
+
+// These bindings carry more unit weight than most, because the smoke test
+// deliberately does not run them: their effect is external and not idempotent,
+// so executing volume or brightness in the suite would move the developer's real
+// sink and real backlight. What the integration test can prove is that an
+// unmodified XF86 keysym dispatches at all; the exact keysym and the exact
+// command it runs are pinned here.
+static void test_media_keys_are_bound_unmodified(void) {
+    const struct {
+        uint32_t keysym;
+        const char *needle;
+    } expected[] = {
+        { XKB_KEY_XF86AudioMute,          "set-mute @DEFAULT_AUDIO_SINK@ toggle"   },
+        { XKB_KEY_XF86AudioLowerVolume,   "set-volume @DEFAULT_AUDIO_SINK@ 5%-"    },
+        { XKB_KEY_XF86AudioRaiseVolume,   "set-volume @DEFAULT_AUDIO_SINK@ 5%+"    },
+        { XKB_KEY_XF86AudioMicMute,       "set-mute @DEFAULT_AUDIO_SOURCE@ toggle" },
+        { XKB_KEY_XF86MonBrightnessDown,  "n=$((c - m/20))"                        },
+        { XKB_KEY_XF86MonBrightnessUp,    "n=$((c + m/20))"                        },
+    };
+
+    for (size_t i = 0; i < sizeof expected / sizeof expected[0]; i++) {
+        // Modifier 0 is the assertion, not an accident: river matches the exact
+        // modifier set, so a media key bound with any modifier never fires from
+        // the keycap that is printed with it.
+        const struct keybind *k = find_keybind(expected[i].keysym, 0);
+        CHECK(k != NULL);
+        if (!k) continue;
+
+        CHECK(is_media_key(k->keysym));
+        CHECK(k->action == action_spawn);
+        CHECK(k->arg.cmd != NULL);
+        CHECK(k->arg.cmd && strstr(k->arg.cmd, expected[i].needle) != NULL);
+    }
+
+    // Raising past unity clips instead of getting louder, so the cap is part of
+    // the binding, not a nicety.
+    const struct keybind *up = find_keybind(XKB_KEY_XF86AudioRaiseVolume, 0);
+    CHECK(up && strstr(up->arg.cmd, "-l 1.0") != NULL);
+
+    // The floor is what keeps a backlight from reaching 0. At 0 the screen is
+    // black and the key that would raise it again is invisible -- an unrecoverable
+    // session from a single keypress.
+    const struct keybind *dim = find_keybind(XKB_KEY_XF86MonBrightnessDown, 0);
+    CHECK(dim && strstr(dim->arg.cmd, "lo=$((m/100+1))") != NULL);
+    CHECK(dim && strstr(dim->arg.cmd, "[ $n -lt $lo ] && n=$lo") != NULL);
 }
 
 int main(void) {
@@ -596,6 +661,7 @@ int main(void) {
     test_focus_app_on_an_empty_list_is_a_no_op();
     test_app_keybind_table_covers_every_letter();
     test_keybind_table_is_well_formed();
+    test_media_keys_are_bound_unmodified();
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
     if (failures) {
@@ -607,6 +673,6 @@ int main(void) {
            "  ok    float toggle intent, float geometry\n"
            "  ok    output removal, usable area, layer focus deferral\n"
            "  ok    mru order, app_id lookup, within-app ring\n"
-           "  ok    keybind tables\n\nPASS\n");
+           "  ok    keybind tables, media keys\n\nPASS\n");
     return 0;
 }

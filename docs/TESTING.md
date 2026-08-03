@@ -72,6 +72,8 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
 - `action: no window for 'z'` and an unchanged `seat: focus window` count -- at
   any moment most of the 26 letters match nothing, so the miss has to leave focus
   alone rather than clear it
+- `binding: pressed keysym 0x1008ffb2 mods 0x0` twice -- an unmodified XF86
+  keysym dispatches at all. Dispatch only, and deliberately so; see below
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
@@ -110,6 +112,21 @@ the right size and stacked correctly whether or not `window_position` honors
 whole smoke test still passes. `window_position` is split out of `window_place`
 purely so `test_position_follows_float_geometry` can guard it; that unit test is
 the only thing standing between us and that bug.
+
+Media keys are the one binding class whose effect is deliberately **not** run.
+The commands act on the machine, not on satori: the real PipeWire sink and the
+real backlight belong to whoever typed `make test`, and a suite that dimmed your
+screen 5% per run would be worse than the bug it guards. Only **mic mute** is
+injected, twice -- exactly reversible, no clamping edge cases, no trace left. It
+proves the thing that could fail silently: that a keysym bound at modifier `0`
+fires at all, which is the same failure mode as `XKB_KEY_E` vs `XKB_KEY_e`.
+Mutation-verified -- rebinding mic mute to `MOD` takes both assertions red.
+
+Everything else about those bindings lives in `test_media_keys_are_bound_unmodified`:
+the exact keysym, that it is bound unmodified, and the exact command string,
+including the `-l 1.0` volume cap and the brightness floor. Three mutants die
+there (mic mute given a modifier, floor clamp deleted, volume cap dropped) and
+none of them is reachable from the smoke test.
 
 Also does not catch the layer-shell focus deferral. `fuzzel` takes focus
 exclusively, and river ignores Satori's focus requests outright in that state,
