@@ -93,6 +93,17 @@ were sized against an output that is about to stop existing.
 The compositor exits fullscreen by itself when the output a window is fullscreen
 on is removed, so Satori only corrects its own record.
 
+## Fullscreen has two entry points
+
+`win_fullscreen_requested` (the client asked) and `action_toggle_fullscreen`
+(Mod+F) both only set `fullscreen` + `fullscreen_dirty` on the window;
+`windows_apply_fullscreen` is the single place either one is applied. Both the
+client's request events and a binding's `pressed` are followed by a
+`manage_start`, so neither needs `manage_dirty`.
+
+`fullscreen_dirty` is cleared once applied, so the toggle has to set it on every
+press. Setting it only on the way in strands the window fullscreen.
+
 ## Layer shell
 
 Binding `river_layer_shell_v1` is what tells river Satori supports layer

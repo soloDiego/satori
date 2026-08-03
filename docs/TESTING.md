@@ -50,6 +50,11 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   protocol requires. Asserted on the proposal, not the `dimensions` event that
   answers it: on a screen-sized window, maximized and fullscreen dimensions are
   identical
+- `window: fullscreen on` then `off` again after two super+f presses -- the same
+  round trip driven by us rather than by the client. Both halves are asserted
+  because `windows_apply_fullscreen` clears the dirty flag after applying: a
+  toggle that sets it only once goes fullscreen and stays there, with no bind
+  left to escape it
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;

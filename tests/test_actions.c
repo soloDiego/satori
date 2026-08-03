@@ -147,6 +147,50 @@ static void test_close_with_nothing_focused_is_a_no_op(void) {
     CHECK(satori.focused == NULL);
 }
 
+// The binding records the same intent a client's fullscreen_requested does, and
+// only for the focused window. Toggling has to survive a round trip: on, then
+// off, with the dirty flag set both ways -- windows_apply_fullscreen clears it
+// after each, so a toggle that only sets it once applies nothing the second time.
+static void test_toggle_fullscreen_marks_only_the_focused_window(void) {
+    struct fixture f;
+    fixture_init(&f);
+    f.satori.focused = &f.middle;
+
+    action_toggle_fullscreen(&f.satori, NOARG);
+    CHECK(f.middle.fullscreen);
+    CHECK(f.middle.fullscreen_dirty);
+    CHECK(!f.newest.fullscreen_dirty);
+    CHECK(!f.oldest.fullscreen_dirty);
+
+    // The sequence applied it and cleared the flag; toggling back must set it again.
+    f.middle.fullscreen_dirty = false;
+    action_toggle_fullscreen(&f.satori, NOARG);
+    CHECK(!f.middle.fullscreen);
+    CHECK(f.middle.fullscreen_dirty);
+}
+
+// A window the client fullscreened is fullscreen to us too, so the binding
+// leaves it, rather than toggling from a stale idea of the state.
+static void test_toggle_fullscreen_leaves_a_client_fullscreened_window(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    struct output out = {0};
+    f.newest.fullscreen = true;         // as win_fullscreen_requested would leave it
+    f.newest.fs_output = &out;
+
+    action_toggle_fullscreen(&f.satori, NOARG);
+    CHECK(!f.newest.fullscreen);
+    CHECK(f.newest.fullscreen_dirty);
+    CHECK(f.newest.fs_output == NULL);
+}
+
+static void test_toggle_fullscreen_with_nothing_focused_is_a_no_op(void) {
+    struct satori satori = {0};
+    action_toggle_fullscreen(&satori, NOARG);
+    CHECK(satori.focused == NULL);
+}
+
 // Losing an output must leave no window pointing at the freed struct, and must
 // mark every window for re-proposal -- they are sized against an output that is
 // about to stop existing.
@@ -278,6 +322,9 @@ int main(void) {
     test_focus_change_marks_dirty();
     test_close_marks_only_the_focused_window();
     test_close_with_nothing_focused_is_a_no_op();
+    test_toggle_fullscreen_marks_only_the_focused_window();
+    test_toggle_fullscreen_leaves_a_client_fullscreened_window();
+    test_toggle_fullscreen_with_nothing_focused_is_a_no_op();
     test_forget_output_drops_references_and_dirties();
     test_usable_area_falls_back_to_the_output();
     test_invalidate_layout_reproposes_everything();
@@ -289,6 +336,7 @@ int main(void) {
         return 1;
     }
     printf("  ok    focus cycling, focus dirty tracking, close intent\n"
+           "  ok    fullscreen toggle intent\n"
            "  ok    output removal, usable area, layer focus deferral\n"
            "  ok    keybind table\n\nPASS\n");
     return 0;

@@ -63,6 +63,21 @@ static void action_close_focused(struct satori *satori, union satori_arg arg) {
 
     if (satori->focused) satori->focused->close_pending = true;
 }
+// The WM-initiated half of fullscreen. Until this existed only the client could
+// ask (foot's own bind, a video player), so a window that offers no fullscreen
+// control of its own could never be fullscreened at all.
+static void action_toggle_fullscreen(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
+    struct window *win = satori->focused;
+    if (!win) return;
+
+    // Exactly the intent win_fullscreen_requested records, so both paths land in
+    // windows_apply_fullscreen and there is one implementation, not two.
+    win->fullscreen = !win->fullscreen;
+    win->fullscreen_dirty = true;
+    win->fs_output = NULL;      // no preference; apply time falls back to the first output
+}
 static void action_focus_next(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
@@ -104,6 +119,7 @@ static const struct keybind keybinds[] = {
     { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot"   } },
     { XKB_KEY_space,  MOD, action_spawn, { .cmd = "fuzzel" } },
     { XKB_KEY_q,      MOD, action_close_focused, {0} },
+    { XKB_KEY_f,      MOD, action_toggle_fullscreen, {0} },
     { XKB_KEY_j,      MOD, action_focus_next,    {0} },
     { XKB_KEY_k,      MOD, action_focus_prev,    {0} },
 

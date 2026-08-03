@@ -1,6 +1,6 @@
 # Keybinds
 
-Compiled in. Table: `keybinds[]`, `src/input.c:104`. No config file yet.
+Compiled in. Table: `keybinds[]`, `src/input.c:118`. No config file yet.
 
 River 0.4 has no built-in bindings and ships no `riverctl`. This table is every
 binding in the session: a key not listed here does nothing.
@@ -12,6 +12,7 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`).
 | Mod+Return | `action_spawn` | `foot` | runs the arg through `/bin/sh -c`, detached |
 | Mod+Space | `action_spawn` | `fuzzel` | as above |
 | Mod+Q | `action_close_focused` | — | close request to the focused window; the client may delay or ignore it |
+| Mod+F | `action_toggle_fullscreen` | — | fullscreens the focused window, or leaves fullscreen |
 | Mod+J | `action_focus_next` | — | next window in list order, wraps |
 | Mod+K | `action_focus_prev` | — | previous window in list order, wraps |
 | Mod+Shift+E | `action_exit_session` | — | ends the session, no confirmation; every client is disconnected |
@@ -26,6 +27,11 @@ invisible.
 
 With one window open, Mod+J/K are no-ops — the wrap lands on the window that is
 already focused, and `window_focus` returns early when focus is unchanged.
+
+Mod+F records the same intent a client's own `fullscreen_requested` does, so both
+land in `windows_apply_fullscreen` and a window fullscreened by the client (foot's
+bind, a video player) leaves fullscreen on Mod+F. Fullscreen covers the whole
+output including any exclusive zone, so a bar is hidden while it is up.
 
 `action_exit_session` needs `river_window_manager_v1` v4; on an older
 compositor it logs and does nothing (`src/input.c:51`).

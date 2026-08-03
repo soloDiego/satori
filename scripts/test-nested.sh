@@ -162,6 +162,26 @@ if [ -x "$KEYPRESS" ]; then
 
     kill "$FS_PID" 2>/dev/null
     FS_PID=""
+    check_count "sees the fullscreen test window close" 'window: closed' 2
+
+    # The other half: fullscreen driven by us, not by the client. Counting from
+    # here, because the client round trip above already logged one of each.
+    fs_on_before="$(grep -cE 'window: fullscreen on' "$LOG")"
+    fs_off_before="$(grep -cE 'window: fullscreen off' "$LOG")"
+    props_before="$(grep -cE 'window: propose' "$LOG")"
+
+    press super+f
+    check       "super+f triggers its binding"   'binding: pressed keysym 0x66'
+    check_count "super+f fullscreens the focused window" \
+        'window: fullscreen on' "$((fs_on_before + 1))"
+
+    # Toggling has to come back off. windows_apply_fullscreen clears the dirty
+    # flag after applying, so a toggle that sets it only once goes fullscreen and
+    # stays there -- with no bind left to escape it.
+    press super+f
+    check_count "super+f toggles back out of fullscreen" \
+        'window: fullscreen off' "$((fs_off_before + 1))"
+    check_count "re-proposes after the toggle" 'window: propose' "$((props_before + 1))"
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi
