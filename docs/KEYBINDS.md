@@ -1,11 +1,12 @@
 # Keybinds
 
-Compiled in. Table: `keybinds[]`, `src/input.c:133`. No config file yet.
+Compiled in. Two tables: `keybinds[]` (`src/input.c:149`) and `app_keybinds[]`
+(`src/input.c:170`). No config file yet.
 
-River 0.4 has no built-in bindings and ships no `riverctl`. This table is every
-binding in the session: a key not listed here does nothing.
+River 0.4 has no built-in bindings and ships no `riverctl`. These tables are
+every binding in the session: a key not listed here does nothing.
 
-Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`).
+Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`), Alt = `MOD1`.
 
 | Binding | Action | Arg | Effect |
 | --- | --- | --- | --- |
@@ -17,9 +18,24 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`).
 | Mod+K | `action_focus_prev` | — | previous window in list order, wraps |
 | Mod+Shift+Space | `action_toggle_floating` | — | floating window keeps its own size and position, or back to maximized |
 | Mod+Shift+E | `action_exit_session` | — | ends the session, no confirmation; every client is disconnected |
+| Mod+Alt+A … Mod+Alt+Z | `action_focus_app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
 
-`mod4|mod1` is reserved for the planned `Mod+Alt+<letter>` app_id lookup and is
-deliberately absent from this table.
+The 26 letter bindings are generated, not typed out (`app_keybinds_init`,
+`src/input.c:180`); `mod4|mod1` carries nothing else, so the whole `Mod+<letter>`
+space stays free for ordinary bindings.
+
+Which window `Mod+Alt+<letter>` picks:
+
+| Focused window's app_id | Picks |
+| --- | --- |
+| does not start with the letter | the matching window focused most recently (`satori->mru`) |
+| starts with the letter | the next match in creation order, wrapping (`satori->windows`) |
+| no window matches | nothing; logs `action: no window for '<letter>'` |
+
+Two lists because the two cases want different answers: recency to arrive, a
+stable ring to walk. See [SEQUENCES.md](SEQUENCES.md). Matching is on the first
+character only, case-insensitive; a window that has not sent an `app_id` yet
+matches no letter.
 
 List order is newest first. Nothing is focused when no window is open; Mod+J/K
 then focus the newest. Focusing also raises: without that the window you cycle
@@ -46,6 +62,10 @@ keysym, so the modifiers are what tell them apart — `0x40` vs `0x41`.
 
 `action_exit_session` needs `river_window_manager_v1` v4; on an older
 compositor it logs and does nothing (`src/input.c:53`).
+
+Mod+Alt+&lt;letter&gt; is a no-op when the only match is the window already focused —
+the ring comes back to it and `window_focus` returns early. Same shape as Mod+J/K
+with one window open.
 
 ## Action arguments
 
@@ -86,7 +106,8 @@ does nothing. `scripts/test-exit.sh` asserts the exact pair Mod+Shift+E produces
 - One binding per keysym+modifier pair per seat. Duplicates: which one fires is
   compositor policy.
 - Bindings are created per seat, at `wm: seat`, and enabled in the next manage
-  sequence (`src/input.c:190`). A key pressed before that reaches the focused
+  sequence (`src/input.c:245`). A key pressed before that reaches the focused
   client instead.
+- 34 bindings per seat: 8 in `keybinds[]`, 26 letters.
 - Actions run outside a manage sequence and must not touch window management
   state. See [SEQUENCES.md](SEQUENCES.md).

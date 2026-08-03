@@ -63,6 +63,15 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   is asserted, not just the word: two thirds of the 1280x720 headless output
   proves the geometry, not only the flag. Mods are asserted too (`0x41`) --
   Mod+Space is the same keysym and would match otherwise
+- `action: focus app 'f'` after super+alt+f, plus one more `seat: focus window`
+  each for a jump into an app, a repeat press, and a jump back out. Needs a
+  second client with a distinct `app_id` (`foot --app-id=vtest`) -- everything
+  else in the run is foot, so with one app 'f' would be the only letter that ever
+  matched and any lookup that ignored the letter would pass. Mods are asserted
+  (`0x48`); `0x40` alone is Mod+F, which is fullscreen
+- `action: no window for 'z'` and an unchanged `seat: focus window` count -- at
+  any moment most of the 26 letters match nothing, so the miss has to leave focus
+  alone rather than clear it
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
@@ -236,8 +245,17 @@ make build/test-actions && ./build/test-actions
 Covers the compositor-free half of the action layer -- focus cycling and its
 wraps, empty and single-window lists, the `focus_dirty` no-op guard, close
 intent, the fullscreen and float toggles, float geometry and placement, output
-removal, usable-area fallback, layer-focus deferral. Fake `struct window`s on
-the stack, handles left NULL and never touched.
+removal, usable-area fallback, layer-focus deferral, MRU promotion and the
+`app_id` lookup. Fake `struct window`s on the stack, handles left NULL and never
+touched.
+
+The lookup is where the unit tests carry the most weight. The smoke test can see
+that focus moved; it cannot see *which list was walked*, and both the recency
+answer and the creation-order answer look like a focus change in the log. The
+two tests that pin it down are `test_focus_app_jumps_to_the_most_recent_match`
+(the older window is the more recently used one, so creation order gives the
+wrong answer) and `test_focus_app_cycles_within_an_app_in_a_stable_ring` (three
+windows of one app; a recency walk visits only two of them, forever).
 
 The layer-focus deferral test runs last on purpose: with the guard removed it
 walks into a request on a NULL proxy and segfaults. That is still red, but it
@@ -248,8 +266,8 @@ lists `src/input.c` as a prerequisite. Drop that and the test binary silently
 stops rebuilding when you edit an action -- it passes forever, testing nothing.
 
 The rest of `src/` is Wayland glue; unit tests there would test libwayland. Next
-compositor-free logic worth covering: config parser, `app_id` prefix match, MRU
-list. Add a real framework when the plain `CHECK` macro stops being enough.
+compositor-free logic worth covering: the config parser. Add a real framework
+when the plain `CHECK` macro stops being enough.
 
 Check a test can fail before trusting it. Break the thing it covers, run it,
 revert:

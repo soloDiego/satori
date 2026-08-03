@@ -32,9 +32,13 @@ session, and what it does not bind cannot be done.
 
 ## Use it
 
+Super+Alt+&lt;letter&gt; goes straight to the window whose `app_id` starts with that
+letter — the one you used most recently, or the next one if you are already
+there. No cycling, nothing to read on screen.
+
 Super+Return opens a terminal, Super+Space a launcher, Super+Q closes the
 focused window, Super+J/K cycle focus. Bindings are compiled in for now —
-[docs/KEYBINDS.md](docs/KEYBINDS.md) covers the table and how to add one.
+[docs/KEYBINDS.md](docs/KEYBINDS.md) covers both tables and how to add one.
 
 ## Tests
 

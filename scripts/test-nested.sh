@@ -21,6 +21,7 @@ RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
 RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
+APP_PID=""
 LAYER_PID=""
 SECOND_PID=""
 SECOND_LOG="$(mktemp -t satori-second.XXXXXX.log)"
@@ -30,6 +31,7 @@ cleanup() {
     [ -n "$SECOND_PID" ] && kill "$SECOND_PID" 2>/dev/null
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     [ -n "$FS_PID" ] && kill "$FS_PID" 2>/dev/null
+    [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
     [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
@@ -246,6 +248,52 @@ if [ -x "$KEYPRESS" ]; then
     press super+shift+space
     check_count "toggles back to maximized" \
         'window: propose [0-9]+x[0-9]+ maximized' "$((max_before + 1))"
+
+    # The app_id lookup. Everything else in this test is foot, so a second
+    # client with a distinct app_id is what gives the letters something to tell
+    # apart -- 'f' must not be the only letter that ever matches.
+    #
+    # Two foot windows are alive here: the original client and the one super+q
+    # left behind, which is what makes the within-app ring observable.
+    WAYLAND_DISPLAY="$NESTED" foot --app-id=vtest sh -c 'sleep 60' >/dev/null 2>&1 &
+    APP_PID=$!
+    check_count "sees the app-lookup test window" 'wm: window' 5
+
+    # It opened focused, so 'f' is a jump out of vtest into the terminals, and
+    # the second press is the ring inside them. 0x48 is mod4|mod1 -- 0x40 alone
+    # would be Mod+F, which is fullscreen.
+    focus_before="$(grep -cE 'seat: focus window' "$LOG")"
+
+    press super+alt+f
+    check "super+alt+f triggers its binding" 'binding: pressed keysym 0x66 mods 0x48'
+    check "reaches a window of that app"     "action: focus app 'f'"
+    check_count "the jump actually moves focus" 'seat: focus window' "$((focus_before + 1))"
+
+    press super+alt+f
+    check_count "a repeat press cycles within the app" \
+        'seat: focus window' "$((focus_before + 2))"
+
+    press super+alt+v
+    check "super+alt+v reaches the other app" "action: focus app 'v'"
+    check_count "jumping back across apps moves focus" \
+        'seat: focus window' "$((focus_before + 3))"
+
+    # Twenty-five of the twenty-six letters match nothing at any given moment,
+    # so the miss has to be a quiet no-op rather than a focus change.
+    focus_before="$(grep -cE 'seat: focus window' "$LOG")"
+    press super+alt+z
+    check "an unmatched letter finds nothing" "action: no window for 'z'"
+    sleep 0.5
+    if [ "$(grep -cE 'seat: focus window' "$LOG")" -eq "$focus_before" ]; then
+        echo "  ok    an unmatched letter leaves focus alone"
+    else
+        echo "  FAIL  an unmatched letter moved focus"
+        FAILED=1
+    fi
+
+    kill "$APP_PID" 2>/dev/null
+    APP_PID=""
+    check_count "sees the app-lookup test window close" 'window: closed' 3
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi

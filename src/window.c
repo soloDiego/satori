@@ -2,11 +2,31 @@
 // them visible. Every request in here is sequence-scoped -- see the function
 // comments in satori.h for which sequence each belongs to.
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "satori.h"
+
+// Recency list. Tolerates a window that is not linked in, so window_focus can
+// call it on anything; the creation-order unlink below cannot, and does not
+// need to -- only window_create adds and only closed removes.
+static void window_mru_unlink(struct satori *satori, struct window *win) {
+    struct window **pp = &satori->mru;
+    while (*pp && *pp != win) {
+        pp = &(*pp)->mru_next;
+    }
+    if (*pp) *pp = win->mru_next;
+    win->mru_next = NULL;
+}
+
+static void window_mru_promote(struct satori *satori, struct window *win) {
+    if (satori->mru == win) return;
+    window_mru_unlink(satori, win);
+    win->mru_next = satori->mru;
+    satori->mru = win;
+}
 
 static void win_closed(void *data, struct river_window_v1 *handle) {
     (void) handle;
@@ -20,10 +40,14 @@ static void win_closed(void *data, struct river_window_v1 *handle) {
         pp = &(*pp)->next;
     }
     *pp = win->next;
+    window_mru_unlink(satori, win);
 
-    // The list head is the newest surviving window.
+    // Focus falls through to the window you used most recently, not the newest
+    // one, which keeps the recency list and the focus in agreement. win is
+    // already unlinked, so mru is a survivor or NULL -- never win itself, and
+    // window_focus therefore cannot early-return here.
     if (satori->focused == win) {
-        window_focus(satori, satori->windows);
+        window_focus(satori, satori->mru);
     }
     if (satori->raised == win) satori->raised = NULL;
 
@@ -159,6 +183,8 @@ void window_create(struct satori *satori, struct river_window_v1 *handle) {
 
     win->next = satori->windows;
     satori->windows = win;
+    win->mru_next = satori->mru;
+    satori->mru = win;
 
     river_window_v1_add_listener(handle, &window_listener, win);
     window_focus(satori, win);      // new windows open focused
@@ -169,6 +195,44 @@ void window_focus(struct satori *satori, struct window *win) {
     if (satori->focused == win) return;
     satori->focused = win;
     satori->focus_dirty = true;
+    // Recency is maintained here rather than in the actions, so every way of
+    // focusing a window feeds the lookup -- bindings, new windows, and focus
+    // falling through when the focused window closes.
+    if (win) window_mru_promote(satori, win);
+}
+
+// Case-insensitive first-letter match. A window with no app_id yet matches
+// nothing rather than matching everything.
+static bool window_app_starts_with(const struct window *win, char letter) {
+    if (!win->app_id || !win->app_id[0]) return false;
+    return tolower((unsigned char) win->app_id[0]) == tolower((unsigned char) letter);
+}
+
+// The window Mod+Alt+<letter> should focus, or NULL when nothing matches.
+//
+// Two questions, so two lists. Coming from another app the answer is recency --
+// the window of that app you used last, which is the whole point of the feature.
+// Already in that app, recency would bounce between the same two windows
+// forever, so the answer is the next match in creation order: a stable ring,
+// the same shape as Mod+J/K.
+struct window *window_find_by_app(const struct satori *satori, char letter) {
+    struct window *focused = satori->focused;
+
+    if (!focused || !window_app_starts_with(focused, letter)) {
+        for (struct window *win = satori->mru; win; win = win->mru_next) {
+            if (window_app_starts_with(win, letter)) return win;
+        }
+        return NULL;
+    }
+
+    // One lap of the ring, starting after the focused window.
+    for (struct window *win = focused->next; win; win = win->next) {
+        if (window_app_starts_with(win, letter)) return win;
+    }
+    for (struct window *win = satori->windows; win != focused; win = win->next) {
+        if (window_app_starts_with(win, letter)) return win;
+    }
+    return focused;     // the only window of its app
 }
 
 // Where a window's node goes: its own coordinates when floating, otherwise the
@@ -358,6 +422,7 @@ void windows_destroy_all(struct satori *satori) {
         win = next;
     }
     satori->windows = NULL;
+    satori->mru = NULL;
     satori->focused = NULL;
     satori->raised = NULL;
 }

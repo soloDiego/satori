@@ -29,6 +29,11 @@ struct satori {
 
     struct output   *outputs;
     struct window   *windows;   // newest first
+    // The same windows in most-recently-focused order. Kept as a second list
+    // rather than by re-ordering `windows`, so cycling stays a stable ring:
+    // promoting the focused window in the creation-order list would turn
+    // Mod+J/K into alt-tab bouncing between the last two windows.
+    struct window   *mru;
     struct seat     *seats;
     struct binding  *bindings;
 
@@ -78,7 +83,8 @@ struct window {
     bool fullscreen;        // desired state, not necessarily the applied one
     bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
     struct output           *fs_output;     // output to fullscreen on; NULL = the first
-    struct window           *next;
+    struct window           *next;      // creation order: stacking, and Mod+J/K
+    struct window           *mru_next;  // recency order: the app_id lookup
 };
 
 struct seat {
@@ -139,6 +145,7 @@ void layer_apply_default_output(struct satori *satori);     // manage sequence
 // window.c
 void window_create(struct satori *satori, struct river_window_v1 *handle);
 void window_focus(struct satori *satori, struct window *win);
+struct window *window_find_by_app(const struct satori *satori, char letter);
 void window_init_float_geometry(struct window *win, const struct output *out);
 void window_position(const struct window *win, const struct output *out,
         int32_t *x, int32_t *y);

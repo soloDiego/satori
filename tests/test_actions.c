@@ -40,9 +40,22 @@ static void fixture_init(struct fixture *f) {
     f->newest.next = &f->middle;
     f->middle.next = &f->oldest;
 
+    // Recency matches creation order until something is re-focused, which is
+    // what three windows opened in a row and never touched again look like.
+    f->newest.mru_next = &f->middle;
+    f->middle.mru_next = &f->oldest;
+
     f->satori.windows = &f->newest;
+    f->satori.mru = &f->newest;
     f->satori.focused = &f->newest;
     f->satori.focus_dirty = false;
+}
+
+// app_id is only ever read here; nothing in these tests frees it.
+static void fixture_app_ids(struct fixture *f, char *newest, char *middle, char *oldest) {
+    f->newest.app_id = newest;
+    f->middle.app_id = middle;
+    f->oldest.app_id = oldest;
 }
 
 static void test_focus_next_walks_then_wraps(void) {
@@ -383,6 +396,150 @@ static void test_focus_defers_while_a_layer_surface_holds_it(void) {
     CHECK(!f.satori.focus_dirty);
 }
 
+// Focusing reorders the recency list and nothing else. If it reordered
+// satori->windows too, Mod+J/K would stop being a ring and start bouncing
+// between the last two windows, and stacking order would follow focus.
+static void test_focus_promotes_in_the_mru_list_only(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    window_focus(&f.satori, &f.oldest);
+    CHECK(f.satori.mru == &f.oldest);
+    CHECK(f.oldest.mru_next == &f.newest);
+    CHECK(f.newest.mru_next == &f.middle);
+    CHECK(f.middle.mru_next == NULL);
+
+    // Creation order is untouched.
+    CHECK(f.satori.windows == &f.newest);
+    CHECK(f.newest.next == &f.middle);
+    CHECK(f.middle.next == &f.oldest);
+
+    // Re-focusing the head is a no-op, not a re-link.
+    window_focus(&f.satori, &f.oldest);
+    CHECK(f.satori.mru == &f.oldest);
+    CHECK(f.oldest.mru_next == &f.newest);
+}
+
+// The killer feature: from another app, the letter lands on the window of that
+// app you used last -- not the newest one, not the first one in the list.
+static void test_focus_app_jumps_to_the_most_recent_match(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, "vim", "foot", "foot");
+
+    // The older of the two terminals was the more recently used one.
+    f.satori.mru = &f.newest;
+    f.newest.mru_next = &f.oldest;
+    f.oldest.mru_next = &f.middle;
+    f.middle.mru_next = NULL;
+
+    action_focus_app(&f.satori, (union satori_arg){ .u = 'f' });
+
+    // Creation order would have answered `middle`; recency is the whole point.
+    CHECK(f.satori.focused == &f.oldest);
+    CHECK(f.satori.focus_dirty);
+}
+
+// Pressing the same letter again walks that app's windows. Recency order would
+// bounce between the last two forever, so this ring is creation order.
+static void test_focus_app_cycles_within_an_app_in_a_stable_ring(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, "foot", "foot", "foot");
+
+    union satori_arg f_key = { .u = 'f' };
+
+    action_focus_app(&f.satori, f_key);
+    CHECK(f.satori.focused == &f.middle);
+    action_focus_app(&f.satori, f_key);
+    CHECK(f.satori.focused == &f.oldest);
+    action_focus_app(&f.satori, f_key);     // wraps
+    CHECK(f.satori.focused == &f.newest);
+}
+
+// Windows of other apps are not part of the ring, and the wrap has to skip them
+// rather than stopping at one.
+static void test_focus_app_ring_skips_other_apps(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, "foot", "vim", "foot");
+    f.satori.focused = &f.oldest;
+
+    action_focus_app(&f.satori, (union satori_arg){ .u = 'f' });
+    CHECK(f.satori.focused == &f.newest);       // wrapped past vim
+}
+
+// One window of that app, already focused: the ring comes back to it and
+// window_focus returns early. Same shape as Mod+J/K with a single window.
+static void test_focus_app_on_the_only_window_of_its_app_is_a_no_op(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, "vim", "foot", "foot");
+
+    action_focus_app(&f.satori, (union satori_arg){ .u = 'v' });
+    CHECK(f.satori.focused == &f.newest);
+    CHECK(!f.satori.focus_dirty);
+}
+
+// An unmatched letter must leave focus exactly where it was. Satori owns every
+// binding, so twenty-five of these twenty-six keys usually match nothing.
+static void test_focus_app_with_no_match_leaves_focus_alone(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, "foot", "foot", "foot");
+    f.satori.focused = &f.middle;
+
+    action_focus_app(&f.satori, (union satori_arg){ .u = 'z' });
+    CHECK(f.satori.focused == &f.middle);
+    CHECK(!f.satori.focus_dirty);
+
+    CHECK(window_find_by_app(&f.satori, 'z') == NULL);
+}
+
+// app_id case is the client's choice, and a window that has not sent one yet
+// must match nothing rather than everything.
+static void test_focus_app_ignores_case_and_a_missing_app_id(void) {
+    struct fixture f;
+    fixture_init(&f);
+    fixture_app_ids(&f, NULL, "Firefox", "foot");
+    f.satori.focused = NULL;
+
+    CHECK(window_find_by_app(&f.satori, 'f') == &f.middle);
+    CHECK(window_find_by_app(&f.satori, 'F') == &f.middle);
+
+    // An empty string is not a match either; it would index off the end.
+    f.middle.app_id = "";
+    CHECK(window_find_by_app(&f.satori, 'f') == &f.oldest);
+}
+
+static void test_focus_app_on_an_empty_list_is_a_no_op(void) {
+    struct satori satori = {0};
+
+    action_focus_app(&satori, (union satori_arg){ .u = 'f' });
+    CHECK(satori.focused == NULL);
+    CHECK(!satori.focus_dirty);
+}
+
+// Every letter needs a binding: a gap is a key that silently does nothing, and
+// the table is generated precisely so there cannot be one.
+static void test_app_keybind_table_covers_every_letter(void) {
+    app_keybinds_init();
+
+    for (size_t i = 0; i < APP_KEYBIND_COUNT; i++) {
+        const struct keybind *k = &app_keybinds[i];
+        CHECK(k->action == action_focus_app);
+        CHECK(k->modifiers == (MOD|ALT));
+        CHECK(k->keysym == (uint32_t) (XKB_KEY_a + i));
+        CHECK(k->arg.u == (uint32_t) ('a' + i));
+    }
+
+    // The reserved namespace has to stay reserved: a Mod+<letter> binding that
+    // strayed into mod4|mod1 would shadow one of these.
+    for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
+        CHECK(keybinds[i].modifiers != (MOD|ALT));
+    }
+}
+
 // A typo'd table is a keybind that silently does nothing, or a spawn that
 // dereferences NULL in /bin/sh. Cheap to rule out.
 static void test_keybind_table_is_well_formed(void) {
@@ -429,6 +586,15 @@ int main(void) {
     test_forget_output_drops_references_and_dirties();
     test_usable_area_falls_back_to_the_output();
     test_invalidate_layout_reproposes_everything();
+    test_focus_promotes_in_the_mru_list_only();
+    test_focus_app_jumps_to_the_most_recent_match();
+    test_focus_app_cycles_within_an_app_in_a_stable_ring();
+    test_focus_app_ring_skips_other_apps();
+    test_focus_app_on_the_only_window_of_its_app_is_a_no_op();
+    test_focus_app_with_no_match_leaves_focus_alone();
+    test_focus_app_ignores_case_and_a_missing_app_id();
+    test_focus_app_on_an_empty_list_is_a_no_op();
+    test_app_keybind_table_covers_every_letter();
     test_keybind_table_is_well_formed();
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
@@ -440,6 +606,7 @@ int main(void) {
            "  ok    fullscreen toggle intent\n"
            "  ok    float toggle intent, float geometry\n"
            "  ok    output removal, usable area, layer focus deferral\n"
-           "  ok    keybind table\n\nPASS\n");
+           "  ok    mru order, app_id lookup, within-app ring\n"
+           "  ok    keybind tables\n\nPASS\n");
     return 0;
 }

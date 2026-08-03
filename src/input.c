@@ -93,6 +93,19 @@ static void action_toggle_floating(struct satori *satori, union satori_arg arg) 
     // sequence re-size the window and inform it of the new state.
     win->proposed = false;
 }
+// The reason satori exists: one chord goes straight to the window you want, with
+// no cycling and nothing to read on screen. arg.u is the letter to match.
+static void action_focus_app(struct satori *satori, union satori_arg arg) {
+    char letter = (char) arg.u;
+
+    struct window *win = window_find_by_app(satori, letter);
+    if (!win) {
+        fprintf(stderr, "action: no window for '%c'\n", letter);
+        return;
+    }
+    window_focus(satori, win);
+    fprintf(stderr, "action: focus app '%c'\n", letter);
+}
 static void action_focus_next(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
@@ -121,6 +134,7 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
 }
 
 #define MOD  RIVER_SEAT_V1_MODIFIERS_MOD4    // super
+#define ALT  RIVER_SEAT_V1_MODIFIERS_MOD1
 #define SHFT RIVER_SEAT_V1_MODIFIERS_SHIFT
 
 // Fixed for now; the scfg config parser will build this table at startup.
@@ -129,7 +143,9 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
 // ships no riverctl. If it is not in this table, there is no way to do it --
 // including leaving the session, hence the exit binding.
 //
-// mod4|mod1 is reserved for the app_id lookup and stays out of this table.
+// mod4|mod1 belongs to the app_id lookup below and stays out of this table, so
+// the whole Mod+<letter> space is free for ordinary bindings and the two never
+// have to arbitrate.
 static const struct keybind keybinds[] = {
     { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot"   } },
     { XKB_KEY_space,  MOD, action_spawn, { .cmd = "fuzzel" } },
@@ -146,6 +162,31 @@ static const struct keybind keybinds[] = {
     // keysym: XKB_KEY_E binds without error and never fires.
     { XKB_KEY_e, MOD|SHFT, action_exit_session, {0} },
 };
+
+// Mod+Alt+<letter>, one binding per letter. Generated rather than typed out:
+// twenty-six near-identical rows are noise, and a letter missed in the middle of
+// them is a key that silently does nothing.
+#define APP_KEYBIND_COUNT 26
+static struct keybind app_keybinds[APP_KEYBIND_COUNT];
+
+// The letter keysyms are their own ASCII values, so the keysym doubles as the
+// letter to match. Both are spelled out anyway -- they are different things that
+// only happen to coincide.
+_Static_assert(XKB_KEY_z - XKB_KEY_a == APP_KEYBIND_COUNT - 1,
+        "letter keysyms are not contiguous");
+
+// Idempotent: bindings borrow pointers into this table, and it is refilled with
+// the same values on every seat.
+static void app_keybinds_init(void) {
+    for (uint32_t i = 0; i < APP_KEYBIND_COUNT; i++) {
+        app_keybinds[i] = (struct keybind){
+            .keysym    = XKB_KEY_a + i,
+            .modifiers = MOD|ALT,
+            .action    = action_focus_app,
+            .arg       = { .u = (uint32_t) ('a' + i) },
+        };
+    }
+}
 
 static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {
     (void) handle;
@@ -202,6 +243,10 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     if (satori->xkb) {
         for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
             binding_create(satori, seat, &keybinds[i]);
+        }
+        app_keybinds_init();
+        for (size_t i = 0; i < APP_KEYBIND_COUNT; i++) {
+            binding_create(satori, seat, &app_keybinds[i]);
         }
     } else {
         fprintf(stderr, "seat: no river_xkb_bindings_v1, key bindings disabled\n");

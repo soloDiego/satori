@@ -16,7 +16,7 @@ The point is atomicity: a window is never half-configured on screen, and Satori
 never races an input event it has not seen yet.
 
 Consequence for the code: **an event handler records intent, a sequence applies
-it.** `binding_pressed` (`src/input.c:116`) sets `close_pending` or moves
+it.** `binding_pressed` (`src/input.c:191`) sets `close_pending` or moves
 `satori->focused`; `wm_manage_start` (`src/wm.c:27`) turns that into
 `river_window_v1_close` and `river_seat_v1_focus_window`.
 
@@ -68,7 +68,7 @@ action that is not deferred.
 ## Stacking
 
 `windows` is prepended, so it runs newest to oldest, and `windows_render` pushes
-each node to the bottom in turn (`src/window.c:330`). The last one pushed is the
+each node to the bottom in turn (`src/window.c:395`). The last one pushed is the
 oldest, so the newest ends on top. Walking the same list with `place_top` inverts
 it and buries new windows.
 
@@ -133,6 +133,45 @@ Geometry:
   the window off screen on whatever output is left.
 - A window toggled while fullscreen only records the state. `windows_propose`
   skips fullscreen windows, so it is sized on the way out.
+
+## Recency, and why there are two window lists
+
+`satori->windows` is creation order. `satori->mru` is the same windows in
+most-recently-focused order, linked through `mru_next`. Every window is in both,
+always.
+
+One list would have been enough for the lookup: promoting the focused window to
+the head of `windows` gives recency, newest-on-top and raise-on-focus from a
+single invariant. It was rejected because it makes Mod+J/K reorder the thing it
+is walking — cycling stops being a ring and becomes alt-tab bouncing between the
+last two windows — and it ties stacking order to focus order.
+
+So the two questions get the two lists (`window_find_by_app`,
+`src/window.c:219`). Arriving from another app, the answer is recency: the
+window of that app you used last. Already in that app, recency would bounce
+between the same two windows forever, so the answer is the next match in
+creation order, wrapping — the same ring Mod+J/K walks.
+
+Invariants:
+
+- Recency is maintained in `window_focus`, not in the actions, so every route to
+  focusing a window feeds the lookup: bindings, a new window opening focused, and
+  focus falling through when the focused window closes.
+- `window_focus` returns early when focus is unchanged, so the promotion is
+  skipped then too. That is correct — the window is already the head.
+- After any focus change the focused window *is* the `mru` head. Nothing depends
+  on it, and `window_find_by_app` does not assume it.
+- `win_closed` unlinks from both lists. Missing the `mru` unlink is a
+  use-after-free the next time a letter is pressed, not a wrong answer.
+- Focus falls through to the `mru` head, not the newest window, so the recency
+  list and the focus stay in agreement.
+- `window_mru_unlink` tolerates a window that is not linked in;
+  the `windows` unlink (`src/window.c:39`) deliberately does not, because only
+  `window_create` adds and only `closed` removes.
+
+None of this is protocol state. It is read inside a binding handler, outside any
+sequence, and only ever produces a `window_focus` — which is intent, applied by
+`seats_apply_focus` in the manage sequence that follows.
 
 ## Layer shell
 
