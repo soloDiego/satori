@@ -6,7 +6,8 @@ compositing; Satori is the client that speaks `river-window-management-v1` and
 supplies the policy — what is focused, how big it is, what the keyboard does.
 Windows open maximized and focused. No workspaces, no tiling.
 
-Needs river 0.4.x or later, and its `river_xkb_bindings_v1` global for keybinds.
+Needs river 0.4.x or later, its `river_xkb_bindings_v1` global for keybinds, and
+`river_layer_shell_v1` for bars and launchers.
 
 ## Run it
 

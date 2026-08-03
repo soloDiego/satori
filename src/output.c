@@ -41,8 +41,13 @@ static void output_removed(void *data, struct river_output_v1 *handle) {
     }
     *pp = out->next;
 
+    layer_output_destroy(out);
     river_output_v1_destroy(out->handle);
     free(out);
+
+    // The default is undefined once the output holding it is gone, and we
+    // cannot tell from here whether this was the one. Re-pick either way.
+    satori->default_output_dirty = true;
     fprintf(stderr, "output: removed\n");
 }
 static const struct river_output_v1_listener output_listener = {
@@ -65,7 +70,19 @@ void output_create(struct satori *satori, struct river_output_v1 *handle) {
     satori->outputs = out;
 
     river_output_v1_add_listener(handle, &output_listener, out);
+    layer_output_create(satori, out);
     fprintf(stderr, "wm: output\n");
+}
+
+// Where a maximized window goes: the output minus whatever layer surfaces have
+// reserved. Falls back to the whole output until the layer shell reports an
+// area, which is also what happens when the layer shell is unavailable.
+void output_usable_area(const struct output *out, int32_t *x, int32_t *y,
+        int32_t *width, int32_t *height) {
+    *x      = out->has_area ? out->area_x      : out->x;
+    *y      = out->has_area ? out->area_y      : out->y;
+    *width  = out->has_area ? out->area_width  : out->width;
+    *height = out->has_area ? out->area_height : out->height;
 }
 
 struct output *output_from_handle(struct satori *satori, struct river_output_v1 *handle) {
@@ -79,6 +96,7 @@ void outputs_destroy_all(struct satori *satori) {
     struct output *out = satori->outputs;
     while (out) {
         struct output *next = out->next;     // save before freeing
+        layer_output_destroy(out);
         river_output_v1_destroy(out->handle);
         free(out);
         out = next;

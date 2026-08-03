@@ -46,8 +46,25 @@ Consequences:
 | workspaces, tags, tiling | not implemented, by design |
 | multiple monitors | tracked, not used; everything pins to one output |
 
-Layer-shell clients are not window-managed — bars, notification daemons,
-launchers, and lock screens work without Satori doing anything.
+## Layer-shell clients
+
+Bars, notification daemons, launchers, and wallpaper setters work. They are not
+window-managed — Satori assigns them no position or size — but river only lets
+them map because Satori binds `river_layer_shell_v1`. A window manager that
+does not bind it gets every layer surface closed on sight, with no error to the
+client: the process starts, stays running, and never appears.
+
+What Satori does with them:
+
+| Thing | Behavior |
+| --- | --- |
+| exclusive zones | subtracted; maximized windows get what is left, so a bar is not covered |
+| keyboard focus | handed over while a layer surface wants it, taken back after |
+| default output | the first one; where a surface that names no output lands |
+| position, size, stacking | river's, not ours |
+
+Lock screens use `ext-session-lock-v1`, not layer shell, and are river's
+business either way.
 
 ## Dependencies for the default bindings
 

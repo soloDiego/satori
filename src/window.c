@@ -152,6 +152,23 @@ void window_focus(struct satori *satori, struct window *win) {
     satori->focus_dirty = true;
 }
 
+// Park a window's node at the top left of the output's usable area. Node
+// position is rendering state, which a manage sequence may also touch -- that is
+// what lets the fullscreen exit path call this.
+static void window_place(struct window *win, const struct output *out) {
+    int32_t x, y, width, height;
+    output_usable_area(out, &x, &y, &width, &height);
+    (void) width; (void) height;    // placement needs the origin only
+    river_node_v1_set_position(win->node, x, y);
+}
+
+// The area windows are sized against changed; every one needs re-proposing.
+void windows_invalidate_layout(struct satori *satori) {
+    for (struct window *win = satori->windows; win; win = win->next) {
+        win->proposed = false;
+    }
+}
+
 // Drop every reference to an output that is going away. The manage sequence
 // that follows the removed event re-proposes what is left.
 void windows_forget_output(struct satori *satori, struct output *out) {
@@ -191,7 +208,7 @@ void windows_apply_fullscreen(struct satori *satori) {
             // also touch.
             win->proposed = false;
             struct output *out = satori->outputs;
-            if (win->node && out) river_node_v1_set_position(win->node, out->x, out->y);
+            if (win->node && out) window_place(win, out);
         }
         fprintf(stderr, "window: fullscreen %s\n", win->fullscreen ? "on" : "off");
     }
@@ -201,6 +218,12 @@ void windows_propose(struct satori *satori) {
     struct output *out = satori->outputs;
     if (!out) return;
 
+    // Maximized means the output minus whatever panels reserved, not the whole
+    // output -- otherwise a bar sits on top of every window.
+    int32_t x, y, width, height;
+    output_usable_area(out, &x, &y, &width, &height);
+    (void) x; (void) y;
+
     for (struct window *win = satori->windows; win; win = win->next) {
         // The server answers every proposal with a dimensions event, which
         // starts another sequence: re-proposing unconditionally never settles.
@@ -208,13 +231,13 @@ void windows_propose(struct satori *satori) {
         // The compositor owns a fullscreen window's size, and it is not
         // maximized. windows_apply_fullscreen clears the flag on the way out.
         if (win->fullscreen) continue;
-        river_window_v1_propose_dimensions(win->handle, out->width, out->height);
+        river_window_v1_propose_dimensions(win->handle, width, height);
         river_window_v1_inform_maximized(win->handle);
         win->proposed = true;
         // A proposal is otherwise invisible: on a screen-sized window the
         // dimensions event that answers it looks the same as the fullscreen
         // one, so a re-proposal cannot be told apart without this.
-        fprintf(stderr, "window: propose %dx%d\n", out->width, out->height);
+        fprintf(stderr, "window: propose %dx%d\n", width, height);
     }
 }
 
@@ -233,7 +256,11 @@ void windows_render(struct satori *satori) {
     // turn, which leaves the newest on top. place_top would invert that.
     for (struct window *win = satori->windows; win; win = win->next) {
         if (!win->node) continue;
-        river_node_v1_set_position(win->node, out ? out->x : 0, out ? out->y : 0);
+        if (out) {
+            window_place(win, out);
+        } else {
+            river_node_v1_set_position(win->node, 0, 0);
+        }
         river_node_v1_place_bottom(win->node);
     }
 }

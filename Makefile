@@ -9,7 +9,7 @@ PKG_CFLAGS	:= $(shell pkg-config --cflags wayland-client xkbcommon)
 PKG_LIBS	:= $(shell pkg-config --libs wayland-client xkbcommon)
 SCANNER		:= $(shell pkg-config --variable=wayland_scanner wayland-scanner)
 
-PROTOCOLS	:= river-window-management-v1 river-xkb-bindings-v1
+PROTOCOLS	:= river-window-management-v1 river-xkb-bindings-v1 river-layer-shell-v1
 PROTO_H		:= $(PROTOCOLS:%=build/%-client-protocol.h)
 PROTO_C		:= $(PROTOCOLS:%=build/%-client-protocol.c)
 PROTO_O		:= $(PROTOCOLS:%=build/%-client-protocol.o)
@@ -75,10 +75,11 @@ build/keypress: tests/keypress.c $(VK_C) $(VK_H) | build
 		tests/keypress.c $(VK_C) $(PKG_LIBS)
 
 # Includes src/input.c (hence the explicit prerequisite), so link everything
-# except build/input.o. window.o pulls in output.o for the output lookup.
-build/test-actions: tests/test_actions.c src/input.c src/satori.h build/window.o build/output.o $(PROTO_O) | build
+# except build/input.o. window.o pulls in output.o for the output lookup, and
+# both of those plus input.c pull in layer.o.
+build/test-actions: tests/test_actions.c src/input.c src/satori.h build/window.o build/output.o build/layer.o $(PROTO_O) | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(PKG_CFLAGS) -o $@ \
-		tests/test_actions.c build/window.o build/output.o $(PROTO_O) $(PKG_LIBS)
+		tests/test_actions.c build/window.o build/output.o build/layer.o $(PROTO_O) $(PKG_LIBS)
 
 test: satori asan build/test-actions build/keypress
 	./build/test-actions

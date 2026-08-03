@@ -29,7 +29,8 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
 
 - `bound river_window_manager_v1 v4` -- active WM
 - `bound river_xkb_bindings_v1 vN` -- keybind global present
-- `wm: output`, `wm: seat`
+- `bound river_layer_shell_v1 vN` -- without it river closes every layer surface
+- `wm: output`, `wm: seat`, `layer: default output`
 - `wm: window` -- client tracked
 - `window: WxH` -- the `dimensions` event; proof `propose_dimensions` landed
 - `seat: focus window` -- focus applied in a manage sequence
@@ -44,6 +45,10 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   protocol requires. Asserted on the proposal, not the `dimensions` event that
   answers it: on a screen-sized window, maximized and fullscreen dimensions are
   identical
+- `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
+  -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
+  keyboard, and Satori takes it back. Only exercises the *exclusive* path;
+  non-exclusive focus has no coverage here, see below
 - survives the client closing -- no crash in the unlink/free path
 - `wm: finished` + process exits -- clean shutdown
 - no ASan/LSan findings (asan run) -- no leaked proxies
@@ -71,6 +76,13 @@ None of these are reachable by unit tests -- they need a real compositor.
 
 Does NOT catch: wrong position, wrong size, inverted stacking. Events flowing
 != pixels correct.
+
+Also does not catch the layer-shell focus deferral. `fuzzel` takes focus
+exclusively, and river ignores Satori's focus requests outright in that state,
+so deleting the `seat->layer_focus` guard still passes here -- verified by
+mutation. The case the guard exists for is non-exclusive (on-demand) focus, and
+exercising it would need a purpose-built layer client. The unit test is the only
+guard; see below.
 
 ## Key injection
 
@@ -191,7 +203,12 @@ make build/test-actions && ./build/test-actions
 
 Covers the compositor-free half of the action layer -- focus cycling and its
 wraps, empty and single-window lists, the `focus_dirty` no-op guard, close
-intent. Fake `struct window`s on the stack, handles left NULL and never touched.
+intent, output removal, usable-area fallback, layer-focus deferral. Fake
+`struct window`s on the stack, handles left NULL and never touched.
+
+The layer-focus deferral test runs last on purpose: with the guard removed it
+walks into a request on a NULL proxy and segfaults. That is still red, but it
+takes the rest of the run with it.
 
 It `#include`s `src/input.c` to reach the static actions, so the Makefile rule
 lists `src/input.c` as a prerequisite. Drop that and the test binary silently

@@ -161,6 +161,8 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     seat->next = satori->seats;
     satori->seats = seat;
 
+    layer_seat_create(satori, seat);
+
     // No key bindings without the xkb bindings global; everything else still works.
     if (satori->xkb) {
         for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
@@ -175,15 +177,26 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
 void seats_apply_focus(struct satori *satori) {
     if (!satori->focus_dirty) return;
 
+    bool applied = false, deferred = false;
     for (struct seat *seat = satori->seats; seat; seat = seat->next) {
+        // A layer surface holds this seat: focusing now is either ignored
+        // (exclusive) or steals the focus the launcher is about to get
+        // (non-exclusive). Stay dirty and wait for focus_none.
+        if (seat->layer_focus) {
+            deferred = true;
+            continue;
+        }
         if (satori->focused) {
             river_seat_v1_focus_window(seat->handle, satori->focused->handle);
         } else {
             river_seat_v1_clear_focus(seat->handle);
         }
+        applied = true;
     }
-    satori->focus_dirty = false;
-    fprintf(stderr, "seat: focus %s\n", satori->focused ? "window" : "cleared");
+    satori->focus_dirty = deferred;
+    if (applied) {
+        fprintf(stderr, "seat: focus %s\n", satori->focused ? "window" : "cleared");
+    }
 }
 
 void bindings_enable_pending(struct satori *satori) {
@@ -209,6 +222,7 @@ void seats_destroy_all(struct satori *satori) {
     struct seat *seat = satori->seats;
     while (seat) {
         struct seat *next = seat->next;
+        layer_seat_destroy(seat);
         river_seat_v1_destroy(seat->handle);
         free(seat);
         seat = next;

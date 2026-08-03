@@ -31,6 +31,13 @@ static void registry_global(void *data, struct wl_registry *registry,
         uint32_t v = clamp_version(version, SATORI_XKB_BINDINGS_VERSION);
         satori->xkb = wl_registry_bind(registry, name, &river_xkb_bindings_v1_interface, v);
         fprintf(stderr, "bound river_xkb_bindings_v1 v%u\n", v);   // no events on this object
+    } else if (strcmp(interface, river_layer_shell_v1_interface.name) == 0) {
+        // Binding this is what tells river we support layer surfaces. Without
+        // it the compositor closes every one, so bars, launchers and wallpapers
+        // silently never map.
+        uint32_t v = clamp_version(version, SATORI_LAYER_SHELL_VERSION);
+        satori->layer_shell = wl_registry_bind(registry, name, &river_layer_shell_v1_interface, v);
+        fprintf(stderr, "bound river_layer_shell_v1 v%u\n", v);    // no events on this object
     }
 }
 static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {
@@ -130,6 +137,8 @@ int main(void) {
     windows_destroy_all(&satori);
     outputs_destroy_all(&satori);
 
+    // After the per-output and per-seat layer objects, which the walks above destroy.
+    if (satori.layer_shell) river_layer_shell_v1_destroy(satori.layer_shell);
     if (satori.xkb) river_xkb_bindings_v1_destroy(satori.xkb);
     river_window_manager_v1_destroy(satori.wm);
     wl_registry_destroy(registry);

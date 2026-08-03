@@ -181,6 +181,68 @@ static void test_forget_output_drops_references_and_dirties(void) {
     CHECK(!f.oldest.proposed);
 }
 
+// Until the layer shell reports an area, a maximized window must still get the
+// whole output -- otherwise the first window on a fresh session is sized 0x0.
+static void test_usable_area_falls_back_to_the_output(void) {
+    struct output out = { .x = 10, .y = 20, .width = 1920, .height = 1080 };
+    int32_t x, y, w, h;
+
+    output_usable_area(&out, &x, &y, &w, &h);
+    CHECK(x == 10 && y == 20 && w == 1920 && h == 1080);
+
+    // A panel reserving 30px at the top: windows go below it, not under it.
+    out.has_area = true;
+    out.area_x = 10; out.area_y = 50;
+    out.area_width = 1920; out.area_height = 1050;
+
+    output_usable_area(&out, &x, &y, &w, &h);
+    CHECK(x == 10 && y == 50 && w == 1920 && h == 1050);
+}
+
+// The area windows are sized against changed, so every window is stale.
+static void test_invalidate_layout_reproposes_everything(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    f.newest.proposed = f.middle.proposed = f.oldest.proposed = true;
+    windows_invalidate_layout(&f.satori);
+
+    CHECK(!f.newest.proposed);
+    CHECK(!f.middle.proposed);
+    CHECK(!f.oldest.proposed);
+}
+
+// While a layer surface holds the seat, focusing is either ignored (exclusive)
+// or steals the focus the launcher is about to get (non-exclusive). Either way
+// the request must not go out, and the intent must survive to the sequence after
+// focus_none -- dropping focus_dirty here loses focus for good.
+//
+// This is the ONLY guard on the deferral: the smoke test cannot see it. fuzzel
+// takes focus exclusively, and river ignores our requests outright in that
+// state, so removing the guard still passes there. The case it really protects
+// is non-exclusive (on-demand) focus -- a bar with clickable modules -- which
+// would need a purpose-built layer client to exercise for real.
+//
+// Runs last, and deliberately: with the guard gone this walks into a request on
+// a NULL proxy and dies. A core dump is a red result, not a silent pass.
+static void test_focus_defers_while_a_layer_surface_holds_it(void) {
+    struct fixture f;
+    fixture_init(&f);
+
+    // No handle is ever dereferenced: the deferral returns before any request.
+    struct seat seat = { .satori = &f.satori, .layer_focus = true };
+    f.satori.seats = &seat;
+    f.satori.focus_dirty = true;
+
+    seats_apply_focus(&f.satori);
+    CHECK(f.satori.focus_dirty);        // still owed, not silently dropped
+
+    // Nothing to apply is not the same as deferring: an unset dirty flag stays unset.
+    f.satori.focus_dirty = false;
+    seats_apply_focus(&f.satori);
+    CHECK(!f.satori.focus_dirty);
+}
+
 // A typo'd table is a keybind that silently does nothing, or a spawn that
 // dereferences NULL in /bin/sh. Cheap to rule out.
 static void test_keybind_table_is_well_formed(void) {
@@ -217,13 +279,17 @@ int main(void) {
     test_close_marks_only_the_focused_window();
     test_close_with_nothing_focused_is_a_no_op();
     test_forget_output_drops_references_and_dirties();
+    test_usable_area_falls_back_to_the_output();
+    test_invalidate_layout_reproposes_everything();
     test_keybind_table_is_well_formed();
+    test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
     if (failures) {
         printf("FAIL  %d check(s)\n", failures);
         return 1;
     }
     printf("  ok    focus cycling, focus dirty tracking, close intent\n"
-           "  ok    output removal, keybind table\n\nPASS\n");
+           "  ok    output removal, usable area, layer focus deferral\n"
+           "  ok    keybind table\n\nPASS\n");
     return 0;
 }

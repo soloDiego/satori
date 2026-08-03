@@ -21,11 +21,13 @@ RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
 RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
+LAYER_PID=""
 FAILED=0
 
 cleanup() {
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     [ -n "$FS_PID" ] && kill "$FS_PID" 2>/dev/null
+    [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
 }
@@ -92,8 +94,13 @@ echo "  ..    nested river on \$WAYLAND_DISPLAY=$NESTED (pid $RIVER_PID)"
 
 check "binds as active window manager" 'bound river_window_manager_v1 v4'
 check "binds the xkb bindings global"  'bound river_xkb_bindings_v1 v[0-9]+'
+# Without this bind river closes every layer surface, so bars and launchers
+# never map -- and the client gives no error, it just never appears.
+check "binds the layer shell global"   'bound river_layer_shell_v1 v[0-9]+'
 check "sees an output"                 'wm: output'
 check "sees a seat"                    'wm: seat'
+# Layer surfaces that name no output need a default, or they have nowhere to go.
+check "picks a default layer output"   'layer: default output'
 
 # Spawn a client into the nested compositor.
 WAYLAND_DISPLAY="$NESTED" foot sh -c 'sleep 60' >/dev/null 2>&1 &
@@ -144,6 +151,28 @@ if [ -x "$KEYPRESS" ]; then
     FS_PID=""
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
+fi
+
+# A real layer surface end to end. fuzzel takes exclusive keyboard focus, which
+# is the case that matters: satori has to stop driving focus while it is up and
+# take it back afterwards. Its lock file is per-$WAYLAND_DISPLAY, so this cannot
+# collide with a fuzzel in the outer session.
+if command -v fuzzel >/dev/null; then
+    focus_before="$(grep -cE 'seat: focus window' "$LOG")"
+
+    WAYLAND_DISPLAY="$NESTED" fuzzel >/dev/null 2>&1 &
+    LAYER_PID=$!
+
+    check "a layer surface takes focus" 'layer: focus (exclusive|non-exclusive)'
+
+    kill "$LAYER_PID" 2>/dev/null
+    LAYER_PID=""
+
+    check "notices the layer surface let go" 'layer: focus none'
+    # The deferred focus has to actually land, not just stop being deferred.
+    check_count "returns focus to a window"  'seat: focus window' "$((focus_before + 1))"
+else
+    echo "  ..    skipping layer shell (fuzzel not installed)"
 fi
 
 # Closing the client must exercise win_closed without taking satori down.

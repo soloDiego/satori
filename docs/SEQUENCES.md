@@ -26,6 +26,7 @@ it.** `binding_pressed` (`src/input.c:116`) sets `close_pending` or moves
 | --- | --- | --- |
 | dimensions, maximize/fullscreen, focus, close, capabilities, binding enable/disable | manage only | `windows_apply_fullscreen`, `windows_propose`, `windows_apply_closes`, `seats_apply_focus`, `bindings_enable_pending` |
 | node position, stacking, borders, clip boxes | manage or render | `windows_render` |
+| layer shell default output | manage only | `layer_apply_default_output` |
 
 `exit_session` belongs to neither: it is not window management state, so
 `action_exit_session` calls it straight from the binding handler. It is the only
@@ -77,6 +78,29 @@ were sized against an output that is about to stop existing.
 
 The compositor exits fullscreen by itself when the output a window is fullscreen
 on is removed, so Satori only corrects its own record.
+
+## Layer shell
+
+Binding `river_layer_shell_v1` is what tells river Satori supports layer
+surfaces. Without the bind river closes every one, silently — the launcher
+starts and never appears. The bind is the feature; the rest is arbitration.
+
+- `non_exclusive_area` gives the output minus reserved zones.
+  `windows_propose` sizes to it, so a bar is not covered. The handler compares
+  before storing: re-proposing on an unchanged area would never settle, same
+  trap as `proposed`.
+- All four layer events (`non_exclusive_area`, the three focus ones) are
+  followed by a `manage_start`. Record intent, no `manage_dirty`.
+- Focus is arbitrated, not owned. On `focus_exclusive` our requests are ignored
+  outright; on `focus_non_exclusive` a focus request in that same sequence
+  cancels the layer surface's focus. `seats_apply_focus` skips those seats and
+  leaves `focus_dirty` set, so `focus_none` gets focus back where it was.
+  Clearing the flag there loses focus for good.
+- `get_output` / `get_seat` are once per output/seat, ever — like `get_node`.
+  Both objects go inert on the corresponding `removed` event and must be
+  destroyed before the `river_layer_shell_v1` they came from.
+- A layer surface that names no output needs a default, or it has nowhere to go.
+  `set_default` is manage-sequence state; `default_output_dirty` carries it.
 
 ## What is not modelled yet
 
