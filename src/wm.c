@@ -27,6 +27,10 @@ static void wm_finished(void *data, struct river_window_manager_v1 *handle) {
 static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) {
     struct satori *satori = data;
 
+    // Before bindings_enable_pending: a reload replaces every binding proxy, and
+    // the new ones are enabled below, in this same sequence.
+    config_reload(satori);
+
     // Before propose: leaving fullscreen clears the proposed flag so the window
     // is re-sized in this same sequence, which is what the protocol asks for.
     layer_apply_default_output(satori);

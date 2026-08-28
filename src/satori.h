@@ -14,10 +14,16 @@
 #define SATORI_XKB_BINDINGS_VERSION 3
 #define SATORI_LAYER_SHELL_VERSION  1
 
+// Modifiers for the generated Mod+Alt+<letter> app lookup, unless the config
+// says otherwise. mod4|mod1 == 0x48 on the wire.
+#define SATORI_APP_KEYS_MODIFIERS \
+    (RIVER_SEAT_V1_MODIFIERS_MOD4 | RIVER_SEAT_V1_MODIFIERS_MOD1)
+
 struct output;
 struct window;
 struct seat;
 struct binding;
+struct config;
 
 struct satori {
     struct river_window_manager_v1  *wm;
@@ -44,6 +50,13 @@ struct satori {
     // it cannot compare equal to a later window at the same address.
     struct window   *raised;
     bool            default_output_dirty;   // the layer shell default output needs re-setting
+
+    struct config   *config;        // owned; the live binding table
+    char            *config_path;   // owned; NULL when there is nowhere to look
+    // A reload was asked for. Applied in the next manage sequence, never at the
+    // point of asking: rebuilding the table frees the very keybind the running
+    // binding callback is reading from.
+    bool            reload_pending;
 };
 
 struct output {
@@ -110,11 +123,41 @@ union satori_arg {
 // manage sequence applies it.
 typedef void (*satori_action)(struct satori *satori, union satori_arg arg);
 
+// Which member of union satori_arg is live -- and so, on teardown, whether the
+// keybind owns heap memory. The table is rebuilt wholesale on every reload, so
+// a keybind has to be freeable without consulting its action: arg.u aliases the
+// same storage as arg.cmd and would be freed as a wild pointer.
+enum satori_arg_kind {
+    SATORI_ARG_NONE,
+    SATORI_ARG_CMD,     // arg.cmd is an owned heap string
+    SATORI_ARG_LETTER,  // arg.u is an ASCII letter; nothing to free
+};
+
 struct keybind {
     uint32_t            keysym;     // xkbcommon keysym, see XKB_KEY_* in <xkbcommon/xkbcommon-keysyms.h>
     uint32_t            modifiers;  // river_seat_v1.modifiers bitfield
     satori_action       action;
     union satori_arg    arg;
+    enum satori_arg_kind arg_kind;
+};
+
+// An action as the config file spells it. Adding an action means adding a row
+// to action_specs in input.c; the name is the only handle a config file has.
+struct action_spec {
+    const char              *name;
+    satori_action           action;
+    enum satori_arg_kind    arg_kind;
+};
+
+// The live binding table, heap owned and rebuilt from scratch on every reload.
+//
+// binds grows by realloc, which MOVES it, and every struct binding borrows a
+// &binds[i]. So a config is built to completion first and never touched again
+// while bindings point into it -- a reload builds a whole new one, and the old
+// table is freed only after every proxy borrowing from it has been destroyed.
+struct config {
+    struct keybind  *binds;
+    size_t          len, cap;
 };
 
 struct binding {
@@ -157,10 +200,25 @@ void windows_apply_closes(struct satori *satori);   // manage sequence
 void windows_render(struct satori *satori);         // render sequence
 void windows_destroy_all(struct satori *satori);
 
+// config.c -- the scfg config file and the binding table it builds. Nothing
+// here touches a compositor.
+char *config_default_path(void);        // owned; NULL if there is no HOME
+struct config *config_load(const char *path, bool with_defaults);   // NULL on error
+void config_destroy(struct config *config);
+bool config_set(struct config *config, uint32_t keysym, uint32_t modifiers,
+        const struct action_spec *spec, union satori_arg arg);  // copies arg.cmd
+void config_unset(struct config *config, uint32_t keysym, uint32_t modifiers);
+bool chord_parse(const char *chord, uint32_t *keysym, uint32_t *modifiers);
+bool modifiers_parse(const char *spec, uint32_t *modifiers);
+
 // input.c -- seats, key bindings, actions.
 void seat_create(struct satori *satori, struct river_seat_v1 *handle);
 void seats_apply_focus(struct satori *satori);      // manage sequence
 void seats_destroy_all(struct satori *satori);
+const struct action_spec *action_from_name(const char *name);
+bool config_apply_defaults(struct config *config);
+void config_reload(struct satori *satori);          // manage sequence
+void bindings_create_all(struct satori *satori);
 void bindings_enable_pending(struct satori *satori);  // manage sequence
 void bindings_destroy_all(struct satori *satori);
 

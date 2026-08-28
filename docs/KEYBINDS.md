@@ -1,28 +1,34 @@
 # Keybinds
 
-Compiled in. Two tables: `keybinds[]` (`src/input.c:164`) and `app_keybinds[]`
-(`src/input.c:205`). No config file yet.
+The defaults. A config file merges over this table — see
+[CONFIG.md](CONFIG.md) for the format, the action names, and reloading.
 
-River 0.4 has no built-in bindings and ships no `riverctl`. These tables are
-every binding in the session: a key not listed here does nothing.
+River 0.4 has no built-in bindings and ships no `riverctl`. This table plus the
+config file is every binding in the session: a key not listed in either does
+nothing.
 
 Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`), Alt = `MOD1`.
 
 | Binding | Action | Arg | Effect |
 | --- | --- | --- | --- |
-| Mod+Return | `action_spawn` | `foot` | runs the arg through `/bin/sh -c`, detached |
-| Mod+Space | `action_spawn` | `fuzzel` | as above |
-| Mod+Q | `action_close_focused` | — | close request to the focused window; the client may delay or ignore it |
-| Mod+F | `action_toggle_fullscreen` | — | fullscreens the focused window, or leaves fullscreen |
-| Mod+J | `action_focus_next` | — | next window in list order, wraps |
-| Mod+K | `action_focus_prev` | — | previous window in list order, wraps |
-| Mod+Shift+Space | `action_toggle_floating` | — | floating window keeps its own size and position, or back to maximized |
-| Mod+Shift+E | `action_exit_session` | — | ends the session, no confirmation; every client is disconnected |
-| Mod+Alt+A … Mod+Alt+Z | `action_focus_app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
+| Mod+Return | `spawn` | `foot` | runs the arg through `/bin/sh -c`, detached |
+| Mod+Space | `spawn` | `fuzzel` | as above |
+| Mod+Q | `close` | — | close request to the focused window; the client may delay or ignore it |
+| Mod+F | `fullscreen` | — | fullscreens the focused window, or leaves fullscreen |
+| Mod+J | `focus-next` | — | next window in list order, wraps |
+| Mod+K | `focus-prev` | — | previous window in list order, wraps |
+| Mod+Shift+Space | `float` | — | floating window keeps its own size and position, or back to maximized |
+| Mod+Shift+R | `reload` | — | re-reads the config file; keeps the running bindings if it does not parse |
+| Mod+Shift+E | `exit` | — | ends the session, no confirmation; every client is disconnected |
+| Mod+Alt+A … Mod+Alt+Z | `focus-app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
 
-The 26 letter bindings are generated, not typed out (`app_keybinds_init`,
-`src/input.c:215`); `mod4|mod1` carries nothing else, so the whole `Mod+<letter>`
-space stays free for ordinary bindings.
+The built-ins are written as action *names* (`defaults`, `src/input.c:205`) and
+installed through the same `config_set` path a config file uses, so a default
+that would be rejected in a config file is rejected here too.
+
+The 26 letter bindings are generated, not typed out (`config_add_app_keys`,
+`src/config.c:209`); `mod4|mod1` carries nothing else, so the whole
+`Mod+<letter>` space stays free for ordinary bindings.
 
 Which window `Mod+Alt+<letter>` picks:
 
@@ -108,13 +114,20 @@ key runs a command and the tool owns the state.
 
 ## Action arguments
 
-`satori_action` takes a `union satori_arg` (`src/satori.h:97`), so one action
-can serve many bindings — `action_spawn` is the reason it exists. Actions that
-ignore it still take it. Members: `cmd` (`const char *`), `u` (`uint32_t`).
+`satori_action` takes a `union satori_arg`, so one action can serve many
+bindings — `spawn` is the reason it exists. Actions that ignore it still take
+it. Members: `cmd` (`const char *`), `u` (`uint32_t`).
+
+Which member is live is recorded alongside it as an `enum satori_arg_kind`
+(`src/satori.h:130`). That is not redundant: the table is heap-owned and rebuilt
+on every reload, so a keybind has to be freeable without consulting its action,
+and `arg.u` aliases the same storage as `arg.cmd`. Freeing unconditionally would
+treat a `focus-app` letter as a pointer.
 
 ## Modifier values
 
-`river_seat_v1.modifiers`, a bitfield. Combine with `|`.
+`river_seat_v1.modifiers`, a bitfield. Config-file spellings are in
+[CONFIG.md](CONFIG.md).
 
 | Name | Value |
 | --- | --- |
@@ -145,11 +158,12 @@ does nothing. `scripts/test-exit.sh` asserts the exact pair Mod+Shift+E produces
 
 ## Constraints
 
-- One binding per keysym+modifier pair per seat. Duplicates: which one fires is
-  compositor policy.
-- Bindings are created per seat, at `wm: seat`, and enabled in the next manage
-  sequence (`src/input.c:280`). A key pressed before that reaches the focused
-  client instead.
-- 40 bindings per seat: 14 in `keybinds[]`, 26 letters.
+- One binding per keysym+modifier pair per seat. `config_set` enforces it by
+  replacing in place; two on one chord would make which fires compositor policy.
+- Bindings are created per seat, at `wm: seat` (`seat_bindings_create`,
+  `src/input.c:301`), and enabled in the next manage sequence. A key pressed
+  before that reaches the focused client instead.
+- 41 bindings per seat by default: 15 built-in, 26 letters. A config file
+  changes the count.
 - Actions run outside a manage sequence and must not touch window management
   state. See [SEQUENCES.md](SEQUENCES.md).

@@ -31,8 +31,9 @@ read it from on a TTY.
 ## What Satori owns
 
 River 0.4 has no built-in key bindings and ships no `riverctl`. Every binding in
-the session comes from `keybinds[]` (`src/input.c:104`). Not in the table = not
-possible. There is no fallback and no command socket.
+the session comes from the built-in table (`defaults`, `src/input.c:205`) and
+`~/.config/satori/config` merged over it. Not in either = not possible. There is
+no fallback and no command socket.
 
 Consequences:
 
@@ -40,11 +41,16 @@ Consequences:
 | --- | --- |
 | exit the session | Mod+Shift+E only |
 | launch anything | Mod+Return (foot), Mod+Space (fuzzel) |
-| volume, brightness, media keys | not bound; add a table row |
-| screenshots | not bound; add a table row |
+| volume, brightness | bound to the media keys |
+| change a binding | `~/.config/satori/config`, Mod+Shift+R to reload |
+| screenshots | not bound; add a `bind` line |
 | move/resize with the mouse | not implemented |
 | workspaces, tags, tiling | not implemented, by design |
 | multiple monitors | tracked, not used; everything pins to one output |
+
+A config file that does not parse never costs you the session: the built-in
+table stands in at startup, and a failed reload keeps the bindings already
+running. See [CONFIG.md](CONFIG.md).
 
 ## Layer-shell clients
 

@@ -1,0 +1,63 @@
+# Satori config -- copy to ~/.config/satori/config
+#
+# This file restates Satori's built-in bindings exactly, so copying it as-is
+# changes nothing. It is a starting point to edit, and a record of what you are
+# running without reading the source.
+#
+# A config file MERGES over the built-ins: a chord you do not mention stays
+# bound. Deleting a line here therefore does not unbind it -- use `none` for
+# that. See docs/CONFIG.md for the format, the full action list, and the
+# modifier spellings.
+#
+# Reload with Mod+Shift+R, or `pkill -HUP satori`. If this file does not parse,
+# the bindings you are already running are kept.
+
+# Mod is super/logo. Mod+Alt is reserved for the app lookup at the bottom.
+
+bind Mod+Return         spawn foot
+bind Mod+Space          spawn fuzzel
+
+bind Mod+Q              close
+bind Mod+F              fullscreen
+bind Mod+Shift+Space    float
+
+bind Mod+J              focus-next
+bind Mod+K              focus-prev
+
+bind Mod+Shift+R        reload
+
+# The only way out of the session, and it does not confirm. Keep something
+# bound to `exit` -- Satori owns every binding, so without one there is no way
+# to log out.
+bind Mod+Shift+E        exit
+
+# Media keys. These are the only bindings with no modifier, and the only ones
+# that may be: XF86 keysyms produce no text, so grabbing them swallows nothing.
+# An unmodified letter would be unusable everywhere in the session.
+#
+# Volume goes through wpctl (wireplumber). `-l 1.0` caps at 100% -- without it
+# wpctl boosts past unity, which clips rather than gets louder.
+bind XF86AudioMute        spawn wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bind XF86AudioLowerVolume spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind XF86AudioRaiseVolume spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ -l 1.0
+bind XF86AudioMicMute     spawn wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+
+# Brightness is a sysfs write, not brightnessctl or light -- neither is a
+# dependency, and the file is group-writable to `video`. Change the device path
+# here if yours is not intel_backlight.
+#
+# The floor of 1% of max is load-bearing: a backlight at 0 is a black screen,
+# and the key that raises it again is one you can no longer see.
+bind XF86MonBrightnessDown spawn "d=/sys/class/backlight/intel_backlight; m=$(cat $d/max_brightness); c=$(cat $d/brightness); lo=$((m/100+1)); n=$((c - m/20)); [ $n -gt $m ] && n=$m; [ $n -lt $lo ] && n=$lo; echo $n > $d/brightness"
+bind XF86MonBrightnessUp   spawn "d=/sys/class/backlight/intel_backlight; m=$(cat $d/max_brightness); c=$(cat $d/brightness); lo=$((m/100+1)); n=$((c + m/20)); [ $n -gt $m ] && n=$m; [ $n -lt $lo ] && n=$lo; echo $n > $d/brightness"
+
+# Mod+Alt+<letter> focuses a window whose app_id starts with that letter -- the
+# one you used most recently, or the next one if you are already in that app.
+# All 26 are generated from this one line. `app-keys none` drops the block.
+app-keys Mod+Alt
+
+# Some things you might want, that are not bound by default:
+#
+# bind Mod+Space none                    # unbind a built-in
+# bind Print spawn grim -g "$(slurp)"    # needs grim + slurp
+# bind Mod+Ctrl+G focus-app f            # re-point one letter by hand

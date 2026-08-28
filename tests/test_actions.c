@@ -520,24 +520,53 @@ static void test_focus_app_on_an_empty_list_is_a_no_op(void) {
     CHECK(!satori.focus_dirty);
 }
 
+// Spelled out rather than taken from SATORI_APP_KEYS_MODIFIERS: the point is to
+// pin the value independently of the macro that produces it.
+#define ALT  RIVER_SEAT_V1_MODIFIERS_MOD1
+#define CTRL RIVER_SEAT_V1_MODIFIERS_CTRL
+
+// The table a session with no config file runs. Every table assertion below goes
+// through the real builder rather than a static array, so the built-ins are
+// checked as they are actually assembled.
+static struct config *defaults_config(void) {
+    struct config *config = config_load(NULL, true);
+    CHECK(config != NULL);
+    return config;
+}
+
+static const struct keybind *find_keybind(const struct config *config,
+        uint32_t keysym, uint32_t modifiers) {
+    for (size_t i = 0; i < config->len; i++) {
+        if (config->binds[i].keysym == keysym && config->binds[i].modifiers == modifiers) {
+            return &config->binds[i];
+        }
+    }
+    return NULL;
+}
+
 // Every letter needs a binding: a gap is a key that silently does nothing, and
-// the table is generated precisely so there cannot be one.
-static void test_app_keybind_table_covers_every_letter(void) {
-    app_keybinds_init();
+// the block is generated precisely so there cannot be one.
+static void test_app_keybinds_cover_every_letter(void) {
+    struct config *config = defaults_config();
+    if (!config) return;
 
-    for (size_t i = 0; i < APP_KEYBIND_COUNT; i++) {
-        const struct keybind *k = &app_keybinds[i];
+    for (uint32_t i = 0; i < 26; i++) {
+        const struct keybind *k = find_keybind(config, XKB_KEY_a + i, MOD|ALT);
+        CHECK(k != NULL);
+        if (!k) continue;
         CHECK(k->action == action_focus_app);
-        CHECK(k->modifiers == (MOD|ALT));
-        CHECK(k->keysym == (uint32_t) (XKB_KEY_a + i));
         CHECK(k->arg.u == (uint32_t) ('a' + i));
+        CHECK(k->arg_kind == SATORI_ARG_LETTER);
     }
 
-    // The reserved namespace has to stay reserved: a Mod+<letter> binding that
+    // The reserved namespace has to stay reserved: any other binding that
     // strayed into mod4|mod1 would shadow one of these.
-    for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
-        CHECK(keybinds[i].modifiers != (MOD|ALT));
+    for (size_t i = 0; i < config->len; i++) {
+        if (config->binds[i].modifiers != (MOD|ALT)) continue;
+        CHECK(config->binds[i].action == action_focus_app);
     }
+
+    config_destroy(config);
 }
 
 // The XF86 block, 0x1008ff00-0x1008ffff: media and laptop function keys. They
@@ -550,37 +579,34 @@ static bool is_media_key(uint32_t keysym) {
 // A typo'd table is a keybind that silently does nothing, or a spawn that
 // dereferences NULL in /bin/sh. Cheap to rule out.
 static void test_keybind_table_is_well_formed(void) {
-    size_t n = sizeof keybinds / sizeof keybinds[0];
-    CHECK(n > 0);
+    struct config *config = defaults_config();
+    if (!config) return;
+
+    CHECK(config->len > 0);
 
     bool has_exit = false;
-    for (size_t i = 0; i < n; i++) {
-        CHECK(keybinds[i].action != NULL);
+    for (size_t i = 0; i < config->len; i++) {
+        const struct keybind *k = &config->binds[i];
+        CHECK(k->action != NULL);
         // An unmodified key swallows normal typing -- unless it is a media key,
         // which types nothing. Binding an unmodified letter would make that
         // letter unusable everywhere in the session.
-        CHECK(keybinds[i].modifiers != 0 || is_media_key(keybinds[i].keysym));
-        if (keybinds[i].action == action_spawn) CHECK(keybinds[i].arg.cmd != NULL);
-        if (keybinds[i].action == action_exit_session) has_exit = true;
+        CHECK(k->modifiers != 0 || is_media_key(k->keysym));
+        if (k->arg_kind == SATORI_ARG_CMD) CHECK(k->arg.cmd != NULL);
+        if (k->action == action_exit_session) has_exit = true;
 
         // Duplicate keysym+modifier pairs: which one fires is compositor policy.
-        for (size_t j = i + 1; j < n; j++) {
-            CHECK(!(keybinds[i].keysym == keybinds[j].keysym
-                    && keybinds[i].modifiers == keybinds[j].modifiers));
+        // config_set is what rules them out, by replacing in place.
+        for (size_t j = i + 1; j < config->len; j++) {
+            CHECK(!(k->keysym == config->binds[j].keysym
+                    && k->modifiers == config->binds[j].modifiers));
         }
     }
     // Satori owns every binding in the session; without this one there is no
     // way to log out.
     CHECK(has_exit);
-}
 
-static const struct keybind *find_keybind(uint32_t keysym, uint32_t modifiers) {
-    for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
-        if (keybinds[i].keysym == keysym && keybinds[i].modifiers == modifiers) {
-            return &keybinds[i];
-        }
-    }
-    return NULL;
+    config_destroy(config);
 }
 
 // These bindings carry more unit weight than most, because the smoke test
@@ -590,6 +616,9 @@ static const struct keybind *find_keybind(uint32_t keysym, uint32_t modifiers) {
 // unmodified XF86 keysym dispatches at all; the exact keysym and the exact
 // command it runs are pinned here.
 static void test_media_keys_are_bound_unmodified(void) {
+    struct config *config = defaults_config();
+    if (!config) return;
+
     const struct {
         uint32_t keysym;
         const char *needle;
@@ -606,7 +635,7 @@ static void test_media_keys_are_bound_unmodified(void) {
         // Modifier 0 is the assertion, not an accident: river matches the exact
         // modifier set, so a media key bound with any modifier never fires from
         // the keycap that is printed with it.
-        const struct keybind *k = find_keybind(expected[i].keysym, 0);
+        const struct keybind *k = find_keybind(config, expected[i].keysym, 0);
         CHECK(k != NULL);
         if (!k) continue;
 
@@ -618,15 +647,321 @@ static void test_media_keys_are_bound_unmodified(void) {
 
     // Raising past unity clips instead of getting louder, so the cap is part of
     // the binding, not a nicety.
-    const struct keybind *up = find_keybind(XKB_KEY_XF86AudioRaiseVolume, 0);
+    const struct keybind *up = find_keybind(config, XKB_KEY_XF86AudioRaiseVolume, 0);
     CHECK(up && strstr(up->arg.cmd, "-l 1.0") != NULL);
 
     // The floor is what keeps a backlight from reaching 0. At 0 the screen is
     // black and the key that would raise it again is invisible -- an unrecoverable
     // session from a single keypress.
-    const struct keybind *dim = find_keybind(XKB_KEY_XF86MonBrightnessDown, 0);
+    const struct keybind *dim = find_keybind(config, XKB_KEY_XF86MonBrightnessDown, 0);
     CHECK(dim && strstr(dim->arg.cmd, "lo=$((m/100+1))") != NULL);
     CHECK(dim && strstr(dim->arg.cmd, "[ $n -lt $lo ] && n=$lo") != NULL);
+
+    config_destroy(config);
+}
+
+// ---- the config file ------------------------------------------------------
+
+static void test_chord_parse_reads_modifiers_and_key(void) {
+    uint32_t keysym = 0, modifiers = 0;
+
+    CHECK(chord_parse("Mod+Return", &keysym, &modifiers));
+    CHECK(keysym == XKB_KEY_Return);
+    CHECK(modifiers == MOD);
+
+    CHECK(chord_parse("Mod+Alt+f", &keysym, &modifiers));
+    CHECK(keysym == XKB_KEY_f);
+    CHECK(modifiers == (MOD|ALT));
+
+    // No modifier at all is legal -- it is how the media keys are written.
+    CHECK(chord_parse("XF86AudioMute", &keysym, &modifiers));
+    CHECK(keysym == XKB_KEY_XF86AudioMute);
+    CHECK(modifiers == 0);
+}
+
+// Aliases exist so a config can be written in whatever vocabulary its author
+// already has. They must land on the same bit.
+static void test_chord_parse_accepts_modifier_aliases(void) {
+    uint32_t a = 0, b = 0, mods_a = 0, mods_b = 0;
+
+    CHECK(chord_parse("Super+q", &a, &mods_a));
+    CHECK(chord_parse("mod4+q", &b, &mods_b));
+    CHECK(a == b);
+    CHECK(mods_a == mods_b && mods_a == MOD);
+
+    CHECK(chord_parse("CTRL+SHIFT+q", &a, &mods_a));
+    CHECK(chord_parse("control+shift+q", &b, &mods_b));
+    CHECK(mods_a == mods_b && mods_a == (CTRL|SHFT));
+}
+
+// The trap that has already shipped a session with no way out: river matches the
+// UNSHIFTED keysym, so a chord written with a capital must still store the
+// lowercase one. XKB_KEY_E binds without error and then never fires.
+static void test_chord_parse_lowers_the_keysym(void) {
+    uint32_t keysym = 0, modifiers = 0;
+
+    CHECK(chord_parse("Mod+Shift+E", &keysym, &modifiers));
+    CHECK(keysym == XKB_KEY_e);
+    CHECK(keysym != XKB_KEY_E);
+    CHECK(modifiers == (MOD|SHFT));
+}
+
+static void test_chord_parse_rejects_junk(void) {
+    uint32_t keysym = 0, modifiers = 0;
+
+    CHECK(!chord_parse("", &keysym, &modifiers));
+    CHECK(!chord_parse("Nope+q", &keysym, &modifiers));         // unknown modifier
+    CHECK(!chord_parse("Mod+notakey", &keysym, &modifiers));    // unknown keysym
+    CHECK(!chord_parse("Mod+Shift", &keysym, &modifiers));      // modifiers only
+    CHECK(!chord_parse("Mod+", &keysym, &modifiers));
+}
+
+static struct config *load_config_text(const char *text) {
+    char path[] = "/tmp/satori-config-XXXXXX";
+    int fd = mkstemp(path);
+    if (fd < 0) return NULL;
+
+    size_t len = strlen(text);
+    bool written = write(fd, text, len) == (ssize_t) len;
+    close(fd);
+
+    struct config *config = written ? config_load(path, true) : NULL;
+    unlink(path);
+    return config;
+}
+
+// The merge rule: a config file overrides individual chords and leaves the rest
+// of the built-ins alone. A one-line file must not cost you the exit binding.
+static void test_config_merges_over_the_defaults(void) {
+    struct config *config = load_config_text("bind Mod+Return spawn alacritty\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    const struct keybind *term = find_keybind(config, XKB_KEY_Return, MOD);
+    CHECK(term && term->arg.cmd && strcmp(term->arg.cmd, "alacritty") == 0);
+
+    // Everything the file did not mention is still bound.
+    CHECK(find_keybind(config, XKB_KEY_e, MOD|SHFT) != NULL);
+    CHECK(find_keybind(config, XKB_KEY_q, MOD) != NULL);
+    CHECK(find_keybind(config, XKB_KEY_XF86AudioMute, 0) != NULL);
+    CHECK(find_keybind(config, XKB_KEY_a, MOD|ALT) != NULL);
+
+    config_destroy(config);
+}
+
+// An override replaces in place rather than appending: two live bindings on one
+// chord makes which one fires compositor policy.
+static void test_config_override_does_not_grow_the_table(void) {
+    struct config *plain = defaults_config();
+    struct config *over = load_config_text("bind Mod+Return spawn alacritty\n");
+    CHECK(plain && over);
+
+    if (plain && over) CHECK(over->len == plain->len);
+
+    config_destroy(plain);
+    config_destroy(over);
+}
+
+// The counterpart to merging: without `none` a built-in can only be pointed
+// somewhere else, never taken away.
+static void test_config_none_unbinds(void) {
+    struct config *plain = defaults_config();
+    struct config *config = load_config_text("bind Mod+Space none\n");
+    CHECK(plain && config);
+    if (!plain || !config) return;
+
+    CHECK(find_keybind(config, XKB_KEY_space, MOD) == NULL);
+    CHECK(config->len == plain->len - 1);
+    // Same keysym, different modifiers: the float toggle must survive.
+    CHECK(find_keybind(config, XKB_KEY_space, MOD|SHFT) != NULL);
+
+    config_destroy(plain);
+    config_destroy(config);
+}
+
+static void test_config_app_keys_can_move_or_go(void) {
+    struct config *moved = load_config_text("app-keys Mod+Ctrl\n");
+    CHECK(moved != NULL);
+    if (moved) {
+        CHECK(find_keybind(moved, XKB_KEY_a, MOD|CTRL) != NULL);
+        CHECK(find_keybind(moved, XKB_KEY_z, MOD|CTRL) != NULL);
+        CHECK(find_keybind(moved, XKB_KEY_a, MOD|ALT) == NULL);
+        config_destroy(moved);
+    }
+
+    struct config *plain = defaults_config();
+    struct config *off = load_config_text("app-keys none\n");
+    CHECK(plain && off);
+    if (plain && off) {
+        CHECK(find_keybind(off, XKB_KEY_a, MOD|ALT) == NULL);
+        CHECK(off->len == plain->len - 26);     // the whole generated block, not one letter
+    }
+    config_destroy(plain);
+    config_destroy(off);
+}
+
+// A file that exists and is wrong returns NULL so the caller keeps the table it
+// already had. Falling back to the defaults silently would be indistinguishable
+// from a config that had been applied.
+static void test_config_rejects_a_broken_file(void) {
+    CHECK(load_config_text("bind Mod+Return nosuchaction\n") == NULL);
+    CHECK(load_config_text("bind Nope+Return spawn foot\n") == NULL);
+    CHECK(load_config_text("bind Mod+Return\n") == NULL);
+    CHECK(load_config_text("bind Mod+Return spawn\n") == NULL);     // no command
+    CHECK(load_config_text("bind Mod+Q close extra\n") == NULL);    // close takes none
+    CHECK(load_config_text("bind Mod+Q none extra\n") == NULL);
+    CHECK(load_config_text("nonsense foo\n") == NULL);              // unknown directive
+    CHECK(load_config_text("app-keys\n") == NULL);
+    CHECK(load_config_text("app-keys Nope\n") == NULL);
+    CHECK(load_config_text("bind Mod+Alt+F focus-app toolong\n") == NULL);
+
+    // One bad line poisons the whole file, including the good lines above it.
+    CHECK(load_config_text("bind Mod+Return spawn foot\nbind Mod+X bogus\n") == NULL);
+}
+
+// A missing file is the normal case, not an error: it means the built-ins.
+static void test_config_missing_file_is_the_defaults(void) {
+    struct config *plain = defaults_config();
+    struct config *missing = config_load("/nonexistent/satori/config", true);
+    CHECK(plain && missing);
+    if (plain && missing) CHECK(missing->len == plain->len);
+
+    config_destroy(plain);
+    config_destroy(missing);
+}
+
+// Unquoted words are joined, so the media-key style commands can be written
+// without quoting. Quotes still work for runs of whitespace.
+static void test_config_spawn_joins_its_words(void) {
+    struct config *config = load_config_text(
+            "bind Mod+V spawn wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+\n"
+            "bind Mod+B spawn \"sh -c 'echo  spaced'\"\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    const struct keybind *joined = find_keybind(config, XKB_KEY_v, MOD);
+    CHECK(joined && joined->arg.cmd
+            && strcmp(joined->arg.cmd, "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+") == 0);
+
+    const struct keybind *quoted = find_keybind(config, XKB_KEY_b, MOD);
+    CHECK(quoted && quoted->arg.cmd && strstr(quoted->arg.cmd, "echo  spaced") != NULL);
+
+    config_destroy(config);
+}
+
+// focus-app is reachable by hand as well as generated, so a single letter can be
+// re-pointed without writing out all twenty-six.
+static void test_config_binds_focus_app_by_hand(void) {
+    struct config *config = load_config_text("bind Mod+Ctrl+G focus-app f\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    const struct keybind *k = find_keybind(config, XKB_KEY_g, MOD|CTRL);
+    CHECK(k && k->action == action_focus_app);
+    CHECK(k && k->arg.u == (uint32_t) 'f');
+    CHECK(k && k->arg_kind == SATORI_ARG_LETTER);
+
+    config_destroy(config);
+}
+
+// The letter block is added before the file's bind lines, so an explicit bind on
+// a generated chord wins. That ordering is the only reason it is reachable.
+static void test_config_bind_overrides_a_generated_letter(void) {
+    struct config *config = load_config_text("bind Mod+Alt+G spawn gimp\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    const struct keybind *k = find_keybind(config, XKB_KEY_g, MOD|ALT);
+    CHECK(k && k->action == action_spawn);
+    CHECK(k && k->arg.cmd && strcmp(k->arg.cmd, "gimp") == 0);
+    CHECK(find_keybind(config, XKB_KEY_f, MOD|ALT) != NULL);    // the rest untouched
+
+    config_destroy(config);
+}
+
+// Replacing a binding has to release the command it replaced. Only ASan sees the
+// leak, so this walks one chord through every arg kind and back out.
+static void test_config_set_replaces_owned_commands(void) {
+    struct config *config = defaults_config();
+    if (!config) return;
+
+    size_t len = config->len;
+    union satori_arg arg = { .cmd = "first" };
+
+    CHECK(config_set(config, XKB_KEY_F1, MOD, action_from_name("spawn"), arg));
+    CHECK(config->len == len + 1);
+
+    arg.cmd = "second";
+    CHECK(config_set(config, XKB_KEY_F1, MOD, action_from_name("spawn"), arg));
+    CHECK(config->len == len + 1);      // replaced, not appended
+
+    const struct keybind *k = find_keybind(config, XKB_KEY_F1, MOD);
+    CHECK(k && k->arg.cmd && strcmp(k->arg.cmd, "second") == 0);
+
+    // Switching to an action with no argument drops the string. Freeing it here
+    // is the point: arg.u would otherwise alias a live pointer.
+    CHECK(config_set(config, XKB_KEY_F1, MOD, action_from_name("close"), (union satori_arg){0}));
+    k = find_keybind(config, XKB_KEY_F1, MOD);
+    CHECK(k && k->arg_kind == SATORI_ARG_NONE);
+
+    config_unset(config, XKB_KEY_F1, MOD);
+    CHECK(find_keybind(config, XKB_KEY_F1, MOD) == NULL);
+    CHECK(config->len == len);
+
+    config_destroy(config);
+}
+
+// example/config claims to restate the built-ins exactly, and a copy of it is
+// what a user starts editing. Nothing stops the two drifting except this: add a
+// built-in binding and forget the example, and it goes red.
+//
+// Loaded WITHOUT the defaults underneath, which is the whole point. Merged, a
+// line missing from the example is indistinguishable from a line present -- the
+// built-in fills the hole and the comparison passes. Only the bare parse can
+// tell the file actually says what it claims to.
+//
+// Run from the repo root, which is where `make test` runs it.
+static void test_example_config_matches_the_defaults(void) {
+    struct config *plain = defaults_config();
+    struct config *example = config_load("example/config", false);
+    CHECK(example != NULL);     // it also has to parse at all
+    if (!plain || !example) {
+        config_destroy(plain);
+        config_destroy(example);
+        return;
+    }
+
+    CHECK(example->len == plain->len);
+
+    for (size_t i = 0; i < plain->len; i++) {
+        const struct keybind *want = &plain->binds[i];
+        const struct keybind *got = find_keybind(example, want->keysym, want->modifiers);
+        CHECK(got != NULL);
+        if (!got) continue;
+
+        CHECK(got->action == want->action);
+        CHECK(got->arg_kind == want->arg_kind);
+        if (want->arg_kind == SATORI_ARG_CMD) {
+            // Catches a quoting slip too: scfg would hand back a mangled command
+            // that binds fine and then does the wrong thing at the keypress.
+            CHECK(got->arg.cmd && strcmp(got->arg.cmd, want->arg.cmd) == 0);
+        } else if (want->arg_kind == SATORI_ARG_LETTER) {
+            CHECK(got->arg.u == want->arg.u);
+        }
+    }
+
+    config_destroy(plain);
+    config_destroy(example);
+}
+
+// Deferred like every other action, for a sharper reason: reloading frees the
+// keybind table the running binding callback is reading out of.
+static void test_reload_only_records_intent(void) {
+    struct satori satori = {0};
+
+    action_reload_config(&satori, NOARG);
+    CHECK(satori.reload_pending);
+    CHECK(satori.config == NULL);       // nothing was rebuilt at the keypress
 }
 
 int main(void) {
@@ -659,9 +994,27 @@ int main(void) {
     test_focus_app_with_no_match_leaves_focus_alone();
     test_focus_app_ignores_case_and_a_missing_app_id();
     test_focus_app_on_an_empty_list_is_a_no_op();
-    test_app_keybind_table_covers_every_letter();
+    test_app_keybinds_cover_every_letter();
     test_keybind_table_is_well_formed();
     test_media_keys_are_bound_unmodified();
+
+    test_chord_parse_reads_modifiers_and_key();
+    test_chord_parse_accepts_modifier_aliases();
+    test_chord_parse_lowers_the_keysym();
+    test_chord_parse_rejects_junk();
+    test_config_merges_over_the_defaults();
+    test_config_override_does_not_grow_the_table();
+    test_config_none_unbinds();
+    test_config_app_keys_can_move_or_go();
+    test_config_rejects_a_broken_file();
+    test_config_missing_file_is_the_defaults();
+    test_config_spawn_joins_its_words();
+    test_config_binds_focus_app_by_hand();
+    test_config_bind_overrides_a_generated_letter();
+    test_config_set_replaces_owned_commands();
+    test_example_config_matches_the_defaults();
+    test_reload_only_records_intent();
+
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
     if (failures) {
@@ -673,6 +1026,9 @@ int main(void) {
            "  ok    float toggle intent, float geometry\n"
            "  ok    output removal, usable area, layer focus deferral\n"
            "  ok    mru order, app_id lookup, within-app ring\n"
-           "  ok    keybind tables, media keys\n\nPASS\n");
+           "  ok    keybind tables, media keys\n"
+           "  ok    chord parsing, keysym lowering\n"
+           "  ok    config merge, unbind, app-keys, rejection\n"
+           "  ok    binding table ownership, reload intent\n\nPASS\n");
     return 0;
 }

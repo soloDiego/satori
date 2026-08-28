@@ -18,6 +18,12 @@ NAME="$(basename "$BIN")"
 
 LOG="$(mktemp -t satori-test.XXXXXX.log)"
 RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
+# Satori reads $XDG_CONFIG_HOME/satori/config. Point it at a scratch directory so
+# the suite tests the built-in table rather than whatever the developer happens
+# to have written, and so the reload test can rewrite the file freely.
+CONF_HOME="$(mktemp -d -t satori-conf.XXXXXX)"
+CONF="$CONF_HOME/satori/config"
+mkdir -p "$CONF_HOME/satori"
 RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
@@ -35,6 +41,7 @@ cleanup() {
     [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
+    rm -rf "$CONF_HOME"
 }
 trap cleanup EXIT
 
@@ -82,7 +89,7 @@ echo "== satori nested-river smoke test ($BIN)"
 
 sockets_before="$(ls "$XDG_RUNTIME_DIR" | grep -E '^wayland-[0-9]+$' | sort)"
 
-WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 XDG_CONFIG_HOME="$CONF_HOME" \
     river -c "$BIN 2>$LOG" >"$RIVER_LOG" 2>&1 &
 RIVER_PID=$!
 
@@ -107,7 +114,7 @@ check "binds the layer shell global"   'bound river_layer_shell_v1 v[0-9]+'
 # the same display is told `unavailable` and has to leave on its own -- it gets
 # no further events and nothing will ever wake it. It also must NOT send `stop`,
 # which is a protocol error when we were never the active WM.
-WAYLAND_DISPLAY="$NESTED" "$BIN" 2>"$SECOND_LOG" &
+WAYLAND_DISPLAY="$NESTED" XDG_CONFIG_HOME="$CONF_HOME" "$BIN" 2>"$SECOND_LOG" &
 SECOND_PID=$!
 
 for _ in {1..50}; do
@@ -311,6 +318,61 @@ if [ -x "$KEYPRESS" ]; then
     kill "$APP_PID" 2>/dev/null
     APP_PID=""
     check_count "sees the app-lookup test window close" 'window: closed' 3
+
+    # Config reload, end to end. The whole chain is what matters here: parse a
+    # new table, destroy every river_xkb_binding_v1 borrowing into the old one,
+    # recreate them, and enable them in the same manage sequence. A binding that
+    # did not exist at startup firing afterwards is the only thing that proves
+    # all four happened.
+    #
+    # Started with no config file at all, so this chord is unbound right now.
+    press super+shift+t
+    sleep 0.5
+    if grep -qE 'binding: pressed keysym 0x74 mods 0x41' "$LOG"; then
+        echo "  FAIL  an unconfigured chord fired before any reload"
+        FAILED=1
+    else
+        echo "  ok    a chord with no binding does nothing"
+    fi
+
+    printf 'bind Mod+Shift+T spawn foot\n' > "$CONF"
+    windows_before="$(grep -cE 'wm: window' "$LOG")"
+
+    press super+shift+r
+    check "super+shift+r triggers its binding" 'binding: pressed keysym 0x72 mods 0x41'
+    check "reloads the config"                 'config: reloaded [0-9]+ bindings'
+
+    press super+shift+t
+    check       "the reloaded binding fires"   'binding: pressed keysym 0x74 mods 0x41'
+    check_count "the reloaded binding runs its command" \
+        'wm: window' "$((windows_before + 1))"
+
+    # SIGHUP is the other trigger, and it exercises a path the keybind does not:
+    # a signal brings no manage sequence with it, so satori has to ask for one
+    # with manage_dirty or the reload sits pending until something else moves a
+    # window.
+    printf 'bind Mod+Shift+T spawn foot\nbind Mod+Shift+Y spawn true\n' > "$CONF"
+    reloads_before="$(grep -cE 'config: reloaded' "$LOG")"
+
+    nested_kill HUP
+    check_count "SIGHUP reloads the config" 'config: reloaded' "$((reloads_before + 1))"
+
+    press super+shift+y
+    check "a binding added over SIGHUP fires" 'binding: pressed keysym 0x79 mods 0x41'
+
+    # The safety rule, and the one worth the most: satori owns 100% of input, so
+    # a reload that cleared the table and then failed to rebuild it would be a
+    # session with no terminal, no launcher, and no way to fix the file that
+    # broke it. The new table is built first and swapped only on success.
+    printf 'bind Mod+Shift+T notanaction\n' > "$CONF"
+    presses_before="$(grep -cE 'binding: pressed keysym 0x74 mods 0x41' "$LOG")"
+
+    nested_kill HUP
+    check "a broken config is rejected" 'config: reload failed, keeping the running bindings'
+
+    press super+shift+t
+    check_count "the running bindings survive a failed reload" \
+        'binding: pressed keysym 0x74 mods 0x41' "$((presses_before + 1))"
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi

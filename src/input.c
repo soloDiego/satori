@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -132,9 +133,38 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
     }
     window_focus(satori, prev);
 }
+// Deferred like everything else, and for a sharper reason than usual: a reload
+// destroys every river_xkb_binding_v1 and frees the keybind table, including the
+// binding object whose pressed callback is running right now. The manage
+// sequence that follows this keypress is a safe place to pull that out.
+static void action_reload_config(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
+    satori->reload_pending = true;
+}
+
+// The names a config file uses to reach an action. This table is the only
+// handle it has, so an action that is not listed here cannot be bound.
+static const struct action_spec action_specs[] = {
+    { "spawn",      action_spawn,             SATORI_ARG_CMD    },
+    { "close",      action_close_focused,     SATORI_ARG_NONE   },
+    { "fullscreen", action_toggle_fullscreen, SATORI_ARG_NONE   },
+    { "float",      action_toggle_floating,   SATORI_ARG_NONE   },
+    { "focus-next", action_focus_next,        SATORI_ARG_NONE   },
+    { "focus-prev", action_focus_prev,        SATORI_ARG_NONE   },
+    { "focus-app",  action_focus_app,         SATORI_ARG_LETTER },
+    { "reload",     action_reload_config,     SATORI_ARG_NONE   },
+    { "exit",       action_exit_session,      SATORI_ARG_NONE   },
+};
+
+const struct action_spec *action_from_name(const char *name) {
+    for (size_t i = 0; i < sizeof action_specs / sizeof action_specs[0]; i++) {
+        if (strcmp(name, action_specs[i].name) == 0) return &action_specs[i];
+    }
+    return NULL;
+}
 
 #define MOD  RIVER_SEAT_V1_MODIFIERS_MOD4    // super
-#define ALT  RIVER_SEAT_V1_MODIFIERS_MOD1
 #define SHFT RIVER_SEAT_V1_MODIFIERS_SHIFT
 
 // Brightness is written straight to sysfs rather than shelled out to
@@ -152,30 +182,45 @@ static void action_focus_prev(struct satori *satori, union satori_arg arg) {
     "[ $n -gt $m ] && n=$m; [ $n -lt $lo ] && n=$lo; "         \
     "echo $n > $d/brightness"
 
-// Fixed for now; the scfg config parser will build this table at startup.
+// The built-in bindings. A config file merges over these rather than replacing
+// them, so an unlisted chord stays bound and `bind <chord> none` is how one is
+// taken away.
 //
 // Satori owns every binding in the session: river 0.4 has no built-in ones and
-// ships no riverctl. If it is not in this table, there is no way to do it --
-// including leaving the session, hence the exit binding.
+// ships no riverctl. If it is not reachable from this table or the config, there
+// is no way to do it -- including leaving the session, hence the exit binding.
 //
-// mod4|mod1 belongs to the app_id lookup below and stays out of this table, so
-// the whole Mod+<letter> space is free for ordinary bindings and the two never
-// have to arbitrate.
-static const struct keybind keybinds[] = {
-    { XKB_KEY_Return, MOD, action_spawn, { .cmd = "foot"   } },
-    { XKB_KEY_space,  MOD, action_spawn, { .cmd = "fuzzel" } },
-    { XKB_KEY_q,      MOD, action_close_focused, {0} },
-    { XKB_KEY_f,      MOD, action_toggle_fullscreen, {0} },
-    { XKB_KEY_j,      MOD, action_focus_next,    {0} },
-    { XKB_KEY_k,      MOD, action_focus_prev,    {0} },
+// mod4|mod1 belongs to the generated app_id lookup (see config_add_app_keys) and
+// stays out of this table, so the whole Mod+<letter> space is free for ordinary
+// bindings and the two never have to arbitrate.
+//
+// Written as action *names* rather than function pointers so the built-ins go in
+// through config_set, exactly like a config file's lines: one code path, and a
+// default that would be rejected in a config file is rejected here too.
+static const struct {
+    uint32_t    keysym;
+    uint32_t    modifiers;
+    const char  *action;
+    const char  *cmd;       // NULL for actions that take no argument
+} defaults[] = {
+    { XKB_KEY_Return, MOD, "spawn", "foot"   },
+    { XKB_KEY_space,  MOD, "spawn", "fuzzel" },
+    { XKB_KEY_q,      MOD, "close",      NULL },
+    { XKB_KEY_f,      MOD, "fullscreen", NULL },
+    { XKB_KEY_j,      MOD, "focus-next", NULL },
+    { XKB_KEY_k,      MOD, "focus-prev", NULL },
 
     // Float/maximize toggle. Shift+space is still the space keysym: river
     // matches the unshifted one, so this does not collide with Mod+Space above.
-    { XKB_KEY_space, MOD|SHFT, action_toggle_floating, {0} },
+    { XKB_KEY_space, MOD|SHFT, "float", NULL },
+
+    // Re-reads the config file. Bound as well as wired to SIGHUP because it
+    // still works when there is no terminal open to send a signal from.
+    { XKB_KEY_r, MOD|SHFT, "reload", NULL },
 
     // Ends the session with no confirmation. River matches the unshifted
     // keysym: XKB_KEY_E binds without error and never fires.
-    { XKB_KEY_e, MOD|SHFT, action_exit_session, {0} },
+    { XKB_KEY_e, MOD|SHFT, "exit", NULL },
 
     // The XF86 media keys, bound with NO modifier -- the one place in this table
     // where that is correct. These keysyms produce no text, so grabbing them
@@ -185,42 +230,33 @@ static const struct keybind keybinds[] = {
     // Volume goes through wpctl: wireplumber is the session manager here. The
     // `-l 1.0` on raise is a cap at 100% -- without it wpctl boosts past unity
     // and the result is clipping, not loudness.
-    { XKB_KEY_XF86AudioMute, 0, action_spawn,
-        { .cmd = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" } },
-    { XKB_KEY_XF86AudioLowerVolume, 0, action_spawn,
-        { .cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" } },
-    { XKB_KEY_XF86AudioRaiseVolume, 0, action_spawn,
-        { .cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ -l 1.0" } },
-    { XKB_KEY_XF86AudioMicMute, 0, action_spawn,
-        { .cmd = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" } },
+    { XKB_KEY_XF86AudioMute, 0, "spawn",
+        "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle" },
+    { XKB_KEY_XF86AudioLowerVolume, 0, "spawn",
+        "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" },
+    { XKB_KEY_XF86AudioRaiseVolume, 0, "spawn",
+        "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ -l 1.0" },
+    { XKB_KEY_XF86AudioMicMute, 0, "spawn",
+        "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle" },
 
-    { XKB_KEY_XF86MonBrightnessDown, 0, action_spawn, { .cmd = BRIGHTNESS_CMD("-") } },
-    { XKB_KEY_XF86MonBrightnessUp,   0, action_spawn, { .cmd = BRIGHTNESS_CMD("+") } },
+    { XKB_KEY_XF86MonBrightnessDown, 0, "spawn", BRIGHTNESS_CMD("-") },
+    { XKB_KEY_XF86MonBrightnessUp,   0, "spawn", BRIGHTNESS_CMD("+") },
 };
 
-// Mod+Alt+<letter>, one binding per letter. Generated rather than typed out:
-// twenty-six near-identical rows are noise, and a letter missed in the middle of
-// them is a key that silently does nothing.
-#define APP_KEYBIND_COUNT 26
-static struct keybind app_keybinds[APP_KEYBIND_COUNT];
-
-// The letter keysyms are their own ASCII values, so the keysym doubles as the
-// letter to match. Both are spelled out anyway -- they are different things that
-// only happen to coincide.
-_Static_assert(XKB_KEY_z - XKB_KEY_a == APP_KEYBIND_COUNT - 1,
-        "letter keysyms are not contiguous");
-
-// Idempotent: bindings borrow pointers into this table, and it is refilled with
-// the same values on every seat.
-static void app_keybinds_init(void) {
-    for (uint32_t i = 0; i < APP_KEYBIND_COUNT; i++) {
-        app_keybinds[i] = (struct keybind){
-            .keysym    = XKB_KEY_a + i,
-            .modifiers = MOD|ALT,
-            .action    = action_focus_app,
-            .arg       = { .u = (uint32_t) ('a' + i) },
-        };
+bool config_apply_defaults(struct config *config) {
+    for (size_t i = 0; i < sizeof defaults / sizeof defaults[0]; i++) {
+        const struct action_spec *spec = action_from_name(defaults[i].action);
+        if (!spec) {
+            fprintf(stderr, "config: built-in binding names unknown action '%s'\n",
+                    defaults[i].action);
+            return false;
+        }
+        union satori_arg arg = { .cmd = defaults[i].cmd };
+        if (!config_set(config, defaults[i].keysym, defaults[i].modifiers, spec, arg)) {
+            return false;
+        }
     }
+    return true;
 }
 
 static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {
@@ -260,6 +296,16 @@ static void binding_create(struct satori *satori, struct seat *seat, const struc
     river_xkb_binding_v1_add_listener(bind->handle, &binding_listener, bind);
 }
 
+// Borrows &config->binds[i] into every proxy, which is why a config is never
+// grown again once bindings exist -- see the note on struct config.
+static void seat_bindings_create(struct satori *satori, struct seat *seat) {
+    if (!satori->xkb || !satori->config) return;
+
+    for (size_t i = 0; i < satori->config->len; i++) {
+        binding_create(satori, seat, &satori->config->binds[i]);
+    }
+}
+
 void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     struct seat *seat = calloc(1, sizeof *seat);
     if (!seat) {
@@ -276,17 +322,45 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
 
     // No key bindings without the xkb bindings global; everything else still works.
     if (satori->xkb) {
-        for (size_t i = 0; i < sizeof keybinds / sizeof keybinds[0]; i++) {
-            binding_create(satori, seat, &keybinds[i]);
-        }
-        app_keybinds_init();
-        for (size_t i = 0; i < APP_KEYBIND_COUNT; i++) {
-            binding_create(satori, seat, &app_keybinds[i]);
-        }
+        seat_bindings_create(satori, seat);
     } else {
         fprintf(stderr, "seat: no river_xkb_bindings_v1, key bindings disabled\n");
     }
     fprintf(stderr, "wm: seat\n");
+}
+
+void bindings_create_all(struct satori *satori) {
+    if (!satori->xkb) return;
+
+    for (struct seat *seat = satori->seats; seat; seat = seat->next) {
+        seat_bindings_create(satori, seat);
+    }
+}
+
+// Parse into a new table and swap only on success. A reload that cleared the
+// bindings and then failed to rebuild them would be a session with no way out --
+// no terminal, no launcher, and no way to fix the config that broke it.
+//
+// The teardown order is the load-bearing part: every proxy borrows a
+// &config->binds[i], so all of them have to go before the table they point into
+// is freed. Running inside the manage sequence means the fresh bindings are
+// enabled by bindings_enable_pending a few lines later, in this same sequence.
+void config_reload(struct satori *satori) {
+    if (!satori->reload_pending) return;
+    satori->reload_pending = false;
+
+    struct config *fresh = config_load(satori->config_path, true);
+    if (!fresh) {
+        fprintf(stderr, "config: reload failed, keeping the running bindings\n");
+        return;
+    }
+
+    bindings_destroy_all(satori);
+    config_destroy(satori->config);
+    satori->config = fresh;
+    bindings_create_all(satori);
+
+    fprintf(stderr, "config: reloaded %zu bindings\n", fresh->len);
 }
 
 void seats_apply_focus(struct satori *satori) {

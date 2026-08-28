@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/signalfd.h>
 #include <unistd.h>
@@ -58,20 +59,44 @@ int main(void) {
 
     struct satori satori = {0};
 
+    // Before the first roundtrip: seat_create builds its bindings straight out
+    // of the table, and the seat event can arrive in the very first dispatch.
+    satori.config_path = config_default_path();
+    satori.config = config_load(satori.config_path, true);
+    if (!satori.config) {
+        // A broken file is not fatal at startup. Falling back to the built-ins
+        // leaves a session that can still open a terminal, fix the config, and
+        // reload -- which beats no bindings at all.
+        fprintf(stderr, "config: falling back to the built-in bindings\n");
+        satori.config = config_load(NULL, true);
+    }
+    if (!satori.config) {
+        fprintf(stderr, "could not build a key binding table\n");
+        free(satori.config_path);
+        wl_display_disconnect(display);
+        return 1;
+    }
+    fprintf(stderr, "config: %zu bindings from %s\n", satori.config->len,
+            satori.config_path ? satori.config_path : "the built-in table");
+
     struct wl_registry *registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, &satori);
 
     // SIGINT/SIGTERM are blocked and read off a fd instead, so a signal can
-    // never land in the middle of a sequence.
+    // never land in the middle of a sequence. SIGHUP rides along as the
+    // scriptable half of a config reload.
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGHUP);
     sigprocmask(SIG_BLOCK, &mask, NULL);
     int sigfd = signalfd(-1, &mask, SFD_CLOEXEC);
 
     if (sigfd == -1) {
         fprintf(stderr, "signalfd failed: %s\n", strerror(errno));
+        config_destroy(satori.config);
+        free(satori.config_path);
         wl_registry_destroy(registry);
         wl_display_disconnect(display);
         return 1;
@@ -120,14 +145,25 @@ int main(void) {
 
         if (pfds[1].revents & POLLIN) {
             struct signalfd_siginfo si;
-            read(sigfd, &si, sizeof si);
-            should_exit = true;
+            if (read(sigfd, &si, sizeof si) != sizeof si) continue;
+
+            if (si.ssi_signo == SIGHUP) {
+                // Unlike a keypress, a signal does not bring a manage sequence
+                // with it, so ask for one -- otherwise the reload sits pending
+                // until something else happens to move a window.
+                satori.reload_pending = true;
+                if (satori.wm) river_window_manager_v1_manage_dirty(satori.wm);
+            } else {
+                should_exit = true;
+            }
         }
     }
 
     wl_display_roundtrip(display);
     if (!satori.wm) {
         fprintf(stderr, "could not bind to global river_window_manager_v1\n");
+        config_destroy(satori.config);
+        free(satori.config_path);
         wl_registry_destroy(registry);
         close(sigfd);
         wl_display_disconnect(display);
@@ -143,10 +179,12 @@ int main(void) {
         }
     }
 
-    bindings_destroy_all(&satori);
+    bindings_destroy_all(&satori);      // the proxies borrow into satori.config
     seats_destroy_all(&satori);
     windows_destroy_all(&satori);
     outputs_destroy_all(&satori);
+    config_destroy(satori.config);
+    free(satori.config_path);
 
     // After the per-output and per-seat layer objects, which the walks above destroy.
     if (satori.layer_shell) river_layer_shell_v1_destroy(satori.layer_shell);

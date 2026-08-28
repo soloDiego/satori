@@ -7,7 +7,8 @@ supplies the policy — what is focused, how big it is, what the keyboard does.
 Windows open maximized and focused. No workspaces, no tiling.
 
 Needs river 0.4.x or later, its `river_xkb_bindings_v1` global for keybinds, and
-`river_layer_shell_v1` for bars and launchers.
+`river_layer_shell_v1` for bars and launchers. Builds against `wayland-client`,
+`xkbcommon` and `libscfg`.
 
 ## Run it
 
@@ -37,8 +38,20 @@ letter — the one you used most recently, or the next one if you are already
 there. No cycling, nothing to read on screen.
 
 Super+Return opens a terminal, Super+Space a launcher, Super+Q closes the
-focused window, Super+J/K cycle focus. Bindings are compiled in for now —
-[docs/KEYBINDS.md](docs/KEYBINDS.md) covers both tables and how to add one.
+focused window, Super+J/K cycle focus.
+
+To change any of it:
+
+```sh
+mkdir -p ~/.config/satori
+cp example/config ~/.config/satori/config
+```
+
+Then edit and reload with Super+Shift+R. `example/config` restates the built-in
+bindings exactly, so copying it changes nothing until you edit it. A config file
+that does not parse is refused and the running bindings are kept.
+[docs/CONFIG.md](docs/CONFIG.md) has the format,
+[docs/KEYBINDS.md](docs/KEYBINDS.md) the defaults.
 
 ## Tests
 
@@ -53,6 +66,7 @@ on every change. Pixels are not covered — see
 ## Next
 
 - [docs/RUNNING.md](docs/RUNNING.md) — running it as your session, and recovery
+- [docs/CONFIG.md](docs/CONFIG.md) — the config file
 - [docs/TESTING.md](docs/TESTING.md) — how to test a change
 - [docs/KEYBINDS.md](docs/KEYBINDS.md) — default bindings
 - [docs/SEQUENCES.md](docs/SEQUENCES.md) — the manage/render state machine

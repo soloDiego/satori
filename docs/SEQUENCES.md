@@ -65,6 +65,51 @@ action that is not deferred.
   right after `wl_display_prepare_read` and cancels the pending read on the way
   out (`src/main.c:88`). Without that check satori sits in `poll` forever.
 
+## Reloading the config
+
+A reload destroys every `river_xkb_binding_v1` and frees the table they point
+into. Both the trigger and the teardown order are constrained.
+
+`get_xkb_binding` and `river_xkb_binding_v1.destroy` carry no sequence
+constraint — only `enable`, `disable` and `set_layout_override` do. So a reload
+*could* run anywhere. It runs in the manage sequence anyway, for two reasons:
+
+- The keypress that asks for it is inside `binding_pressed`, reading
+  `bind->keybind`. Rebuilding there frees the keybind the running callback is
+  reading and destroys the proxy libwayland is dispatching on. `action_reload`
+  records intent like every other action; `config_reload` runs later.
+- The fresh bindings need `enable`, which *is* window management state.
+  `config_reload` runs first in `manage_start`, so `bindings_enable_pending`
+  enables them a few lines later in that same sequence.
+
+The protocol endorses this directly: the `pressed` event's description says the
+compositor waits for the manage sequence to complete "to allow the window
+manager client to, for example, modify key bindings ... without racing against
+future input events."
+
+Teardown order is the part that bites. Every `struct binding` borrows a
+`&config->binds[i]`, and `binds` is a growable array — a `realloc` moves it. Two
+rules follow:
+
+- A config is built to completion before any binding borrows into it, and is
+  never grown again afterwards. A reload builds a whole new one.
+- Every proxy is destroyed *before* the table it borrows from is freed. Getting
+  this backwards is a use-after-free in `binding_pressed`, not a wrong answer —
+  deleting the `bindings_destroy_all` from `config_reload` crashes satori on the
+  next keypress under ASan.
+
+The new table is parsed first and swapped in only if it parsed. Satori owns
+100% of input, so a reload that cleared the bindings and then failed to rebuild
+them is a session with no terminal, no launcher, and no way to fix the file that
+broke it. On failure the running bindings are left exactly as they were.
+
+SIGHUP needs one extra step a keybind does not: a signal arrives with no manage
+sequence behind it, so the loop calls `manage_dirty` to ask for one
+(`src/main.c:150`). Without it the reload sits pending until something else
+happens to move a window. This is the protocol's own worked example for
+`manage_dirty` — its description names an internal state change the compositor
+cannot see.
+
 ## Stacking
 
 `windows` is prepended, so it runs newest to oldest, and `windows_render` pushes

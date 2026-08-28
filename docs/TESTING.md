@@ -23,6 +23,10 @@ Runs river under the **headless** wlroots backend (`WLR_BACKENDS=headless`):
 virtual 1280x720 output, no window on screen, outer session untouched. Satori
 binds as *its* WM, so a hang breaks nothing.
 
+`XDG_CONFIG_HOME` is pointed at a scratch directory for the nested run, so the
+suite always tests the built-in table rather than whatever config the developer
+happens to have written, and the reload assertions can rewrite the file freely.
+
 Each run: bind -> spawn a real `foot` into the nested compositor -> inject key
 chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
 `stop` / `finished` handshake. Asserts:
@@ -74,6 +78,20 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   alone rather than clear it
 - `binding: pressed keysym 0x1008ffb2 mods 0x0` twice -- an unmodified XF86
   keysym dispatches at all. Dispatch only, and deliberately so; see below
+- the config reload chain, in order: super+shift+t does **nothing** before any
+  reload (the suite starts with no config file), then a config is written,
+  super+shift+r logs `config: reloaded N bindings`, and super+shift+t now fires
+  and spawns a window. A chord that was unbound at startup firing afterwards is
+  the only assertion that proves all four steps happened -- parse, destroy every
+  proxy borrowing into the old table, recreate, and enable in the same manage
+  sequence
+- one more `config: reloaded` after `SIGHUP`, and a binding added over that
+  reload firing. SIGHUP exercises a path the keybind does not: a signal brings no
+  manage sequence with it, so satori has to ask for one with `manage_dirty`
+- `config: reload failed, keeping the running bindings` after a SIGHUP with a
+  broken config, **and the previously loaded binding still firing**. The second
+  half is the assertion that matters: satori owns 100% of input, so a reload that
+  cleared the table and then failed would be a session with no way out
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
@@ -266,6 +284,32 @@ removal, usable-area fallback, layer-focus deferral, MRU promotion and the
 `app_id` lookup. Fake `struct window`s on the stack, handles left NULL and never
 touched.
 
+Also the whole of `src/config.c`, which is pure and needs no compositor at all:
+chord parsing and its rejections, the keysym lowering, merge-over-defaults,
+`bind ... none`, `app-keys`, param joining, and every way a file can be
+rejected. Config files are written to a temp path and loaded for real, so
+`libscfg` is exercised rather than mocked.
+
+`test_config_set_replaces_owned_commands` walks one chord through every
+`arg_kind` and back out. It looks like it asserts nothing interesting, and under
+the plain binary it nearly doesn't -- its real value is under ASan, where an
+override that failed to free the command it replaced shows up as a leak.
+
+The binding-table assertions run against a real `config_load(NULL, true)` rather
+than a static array, so the built-ins are checked as they are actually assembled
+-- including that every one of them names an action that exists.
+
+`test_example_config_matches_the_defaults` parses `example/config` and compares
+it binding for binding with the built-ins, so the shipped example cannot drift
+from what it claims to restate. It loads the file with `with_defaults=false`,
+and that argument is the entire test: merged, a line *missing* from the example
+is filled in by the built-in underneath it and the comparison passes. Verified
+by deleting a `bind` line -- red only with the bare parse.
+
+Deleting the `app-keys Mod+Alt` line is an equivalent mutant and stays green.
+That is correct: `Mod+Alt` is the default when the directive is absent, so the
+line documents the knob rather than changing anything.
+
 The lookup is where the unit tests carry the most weight. The smoke test can see
 that focus moved; it cannot see *which list was walked*, and both the recency
 answer and the creation-order answer look like a focus change in the log. The
@@ -281,10 +325,11 @@ takes the rest of the run with it.
 It `#include`s `src/input.c` to reach the static actions, so the Makefile rule
 lists `src/input.c` as a prerequisite. Drop that and the test binary silently
 stops rebuilding when you edit an action -- it passes forever, testing nothing.
+`build/config.o` is linked rather than included; it calls back into the included
+`input.c` for `action_from_name`.
 
-The rest of `src/` is Wayland glue; unit tests there would test libwayland. Next
-compositor-free logic worth covering: the config parser. Add a real framework
-when the plain `CHECK` macro stops being enough.
+The rest of `src/` is Wayland glue; unit tests there would test libwayland. Add a
+real framework when the plain `CHECK` macro stops being enough.
 
 Check a test can fail before trusting it. Break the thing it covers, run it,
 revert:
@@ -294,3 +339,23 @@ sed -i 's/if (satori->focused == win) return;/if (0) return;/' src/window.c
 make -s build/test-actions && ./build/test-actions   # expect FAIL
 git checkout src/window.c
 ```
+
+**`make` does not rebuild `build/test-actions`** -- only the `test` target does.
+Build it explicitly, and run the unmutated control first. A mutation run against
+a stale binary reports every mutant surviving, which has already produced one
+full wrong conclusion. `build/keypress` has the same trap: `make clean` removes
+it and `make satori` does not bring it back, so ad-hoc chord injection silently
+does nothing.
+
+Mutants the reload path has been checked against, all four fatal:
+
+| Mutation | Result |
+| --- | --- |
+| `chord_parse` skips `xkb_keysym_to_lower` | 5 unit CHECKs + 4 smoke assertions |
+| SIGHUP without `manage_dirty` | 3 smoke assertions; the reload never fires |
+| `config_load` returns its table instead of NULL on error | 11 unit CHECKs + 2 smoke |
+| `config_reload` frees the old table before destroying the proxies | ASan heap-use-after-free in `binding_pressed`; satori dies, 6 assertions |
+
+The last one is the reason the teardown order is worth a doc line in
+[SEQUENCES.md](SEQUENCES.md): it is a lifetime bug rather than a wrong answer,
+and only ASan or an outright crash surfaces it.
