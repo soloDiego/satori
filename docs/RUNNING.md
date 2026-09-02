@@ -93,6 +93,7 @@ no bindings, no focus changes, new windows never appear.
 | Satori crashed or was killed | rerun `satori` over SSH or from a TTY; it takes the free slot |
 | Satori hung mid-sequence | `pkill -x satori`, then rerun. A missed `manage_finish` blocks the compositor, so the screen is frozen but the machine is not |
 | need a shell, no working binding | Ctrl+Alt+F2 for a TTY, or SSH in |
+| a `passthrough` app has the keyboard | Mod+Shift+P hands it back for that window; Mod+Shift+E still exits. Both are exempt and never disabled |
 
 Never `pkill -f satori`: river's argv contains satori's path when it is the
 `-c` command, so `-f` signals the compositor too. `pkill -x`.
@@ -112,4 +113,5 @@ Untested on a real TTY session — only ever run nested. Also:
 - Output hotplug is handled (`output_removed`) but never exercised on hardware.
 - Docking to a second monitor: the newest output wins, and windows follow it.
 - A mid-session seat unplug dangles; there is no seat listener yet.
-- No floating mode, so `Mod+F` does nothing and windows are always maximized.
+- Floating (Mod+Shift+Space) gets one geometry — two thirds of the usable area,
+  centered. Nothing moves, resizes or snaps it yet.

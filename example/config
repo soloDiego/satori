@@ -26,6 +26,10 @@ bind Mod+K              focus-prev
 
 bind Mod+Shift+R        reload
 
+# Suspends passthrough for the focused window, and turns it back on. See the
+# `passthrough` block at the bottom.
+bind Mod+Shift+P        passthrough
+
 # The only way out of the session, and it does not confirm. Keep something
 # bound to `exit` -- Satori owns every binding, so without one there is no way
 # to log out.
@@ -55,6 +59,21 @@ bind XF86MonBrightnessUp   spawn "d=/sys/class/backlight/intel_backlight; m=$(ca
 # one you used most recently, or the next one if you are already in that app.
 # All 26 are generated from this one line. `app-keys none` drops the block.
 app-keys Mod+Alt
+
+# Apps that should get the keyboard to themselves: a VM console, a nested
+# compositor, a remote desktop. While one of these has focus every binding above
+# is disabled and the keys reach the client instead.
+#
+# Two bindings are never disabled, so you are never locked in: Mod+Shift+P
+# (suspends passthrough for that one window) and Mod+Shift+E (exit). Whatever
+# chords those two actions are bound to keep the exemption.
+#
+# app_ids are matched whole and case-insensitively. `foot -o ...` will not tell
+# you one; run `satori` with the log open and read the `wm: window` lines, or
+# check the app's desktop file.
+#
+# passthrough org.qemu.qemu virt-manager
+# passthrough org.remmina.Remmina
 
 # Some things you might want, that are not bound by default:
 #

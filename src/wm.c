@@ -27,7 +27,7 @@ static void wm_finished(void *data, struct river_window_manager_v1 *handle) {
 static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) {
     struct satori *satori = data;
 
-    // Before bindings_enable_pending: a reload replaces every binding proxy, and
+    // Before bindings_apply_enabled: a reload replaces every binding proxy, and
     // the new ones are enabled below, in this same sequence.
     config_reload(satori);
 
@@ -38,7 +38,7 @@ static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) 
     windows_propose(satori);
     windows_apply_closes(satori);
     seats_apply_focus(satori);
-    bindings_enable_pending(satori);
+    bindings_apply_enabled(satori);
 
     river_window_manager_v1_manage_finish(handle);
 }

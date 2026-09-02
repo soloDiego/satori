@@ -584,7 +584,7 @@ static void test_keybind_table_is_well_formed(void) {
 
     CHECK(config->len > 0);
 
-    bool has_exit = false;
+    bool has_exit = false, has_escape = false;
     for (size_t i = 0; i < config->len; i++) {
         const struct keybind *k = &config->binds[i];
         CHECK(k->action != NULL);
@@ -594,6 +594,7 @@ static void test_keybind_table_is_well_formed(void) {
         CHECK(k->modifiers != 0 || is_media_key(k->keysym));
         if (k->arg_kind == SATORI_ARG_CMD) CHECK(k->arg.cmd != NULL);
         if (k->action == action_exit_session) has_exit = true;
+        if (k->action == action_toggle_passthrough) has_escape = true;
 
         // Duplicate keysym+modifier pairs: which one fires is compositor policy.
         // config_set is what rules them out, by replacing in place.
@@ -605,6 +606,8 @@ static void test_keybind_table_is_well_formed(void) {
     // Satori owns every binding in the session; without this one there is no
     // way to log out.
     CHECK(has_exit);
+    // And without this one, a passthrough app takes the keyboard for good.
+    CHECK(has_escape);
 
     config_destroy(config);
 }
@@ -813,6 +816,7 @@ static void test_config_rejects_a_broken_file(void) {
     CHECK(load_config_text("nonsense foo\n") == NULL);              // unknown directive
     CHECK(load_config_text("app-keys\n") == NULL);
     CHECK(load_config_text("app-keys Nope\n") == NULL);
+    CHECK(load_config_text("passthrough\n") == NULL);           // needs at least one app_id
     CHECK(load_config_text("bind Mod+Alt+F focus-app toolong\n") == NULL);
 
     // One bad line poisons the whole file, including the good lines above it.
@@ -941,6 +945,9 @@ static void test_example_config_matches_the_defaults(void) {
 
         CHECK(got->action == want->action);
         CHECK(got->arg_kind == want->arg_kind);
+        // An escape route that lost its exemption in the example would be a
+        // passthrough session with no way back out.
+        CHECK(got->exempt == want->exempt);
         if (want->arg_kind == SATORI_ARG_CMD) {
             // Catches a quoting slip too: scfg would hand back a mangled command
             // that binds fine and then does the wrong thing at the keypress.
@@ -952,6 +959,183 @@ static void test_example_config_matches_the_defaults(void) {
 
     config_destroy(plain);
     config_destroy(example);
+}
+
+// ---- passthrough ----------------------------------------------------------
+
+// Satori never sees raw key events: river matches bindings itself and only
+// sends `pressed` for chords that already matched, so there is no lookup to skip
+// and no key to forward. Disabling the bindings IS the forward -- the compositor
+// then stops matching them and delivers the keys to the client.
+//
+// These tests cover the decision, which is all of the logic. The enable/disable
+// loop needs live proxies and is covered by the smoke test instead.
+
+static void test_passthrough_matches_the_configured_app_ids(void) {
+    struct config *config = load_config_text("passthrough org.qemu.qemu virt-manager\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    CHECK(config_is_passthrough(config, "org.qemu.qemu"));
+    CHECK(config_is_passthrough(config, "virt-manager"));
+
+    // Case is the client's choice; the config is written by hand.
+    CHECK(config_is_passthrough(config, "Org.QEMU.qemu"));
+
+    // Whole string, not a prefix: a window must not inherit passthrough from an
+    // app_id it merely starts with.
+    CHECK(!config_is_passthrough(config, "org.qemu"));
+    CHECK(!config_is_passthrough(config, "org.qemu.qemu.extra"));
+    CHECK(!config_is_passthrough(config, "foot"));
+
+    // A window that has not sent an app_id yet matches nothing rather than
+    // everything -- backwards, this is a window that eats every binding.
+    CHECK(!config_is_passthrough(config, NULL));
+    CHECK(!config_is_passthrough(config, ""));
+    CHECK(!config_is_passthrough(NULL, "org.qemu.qemu"));
+
+    config_destroy(config);
+
+    // Repeated directives accumulate; there is no built-in set to replace, so
+    // nothing needs taking away. A duplicate is not an error and not stored.
+    struct config *many = load_config_text(
+            "passthrough qemu\npassthrough QEMU\npassthrough vmm\n");
+    CHECK(many != NULL);
+    if (many) {
+        CHECK(many->passthrough_len == 2);
+        CHECK(config_is_passthrough(many, "qemu"));
+        CHECK(config_is_passthrough(many, "vmm"));
+        config_destroy(many);
+    }
+}
+
+// Passthrough is opt-in: an untouched session must behave exactly as it did
+// before the feature existed.
+static void test_passthrough_is_empty_by_default(void) {
+    struct config *config = defaults_config();
+    if (!config) return;
+
+    CHECK(config->passthrough_len == 0);
+    CHECK(!config_is_passthrough(config, "org.qemu.qemu"));
+
+    config_destroy(config);
+}
+
+static void test_passthrough_follows_the_focused_window(void) {
+    struct config *config = load_config_text("passthrough org.qemu.qemu\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    struct fixture f;
+    fixture_init(&f);
+    f.satori.config = config;
+    fixture_app_ids(&f, "foot", "org.qemu.qemu", "foot");
+
+    CHECK(!satori_passthrough_active(&f.satori));    // focus is on a terminal
+
+    f.satori.focused = &f.middle;
+    CHECK(satori_passthrough_active(&f.satori));
+
+    // Nothing focused is not passthrough: it would disable every binding with no
+    // window to hand the keys to, and no binding left to focus one.
+    f.satori.focused = NULL;
+    CHECK(!satori_passthrough_active(&f.satori));
+
+    config_destroy(config);
+}
+
+// The escape binding suspends passthrough for one window, not globally: another
+// window of the same app keeps it.
+static void test_passthrough_escape_suspends_one_window(void) {
+    struct config *config = load_config_text("passthrough org.qemu.qemu\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    struct fixture f;
+    fixture_init(&f);
+    f.satori.config = config;
+    fixture_app_ids(&f, "org.qemu.qemu", "org.qemu.qemu", "foot");
+
+    CHECK(satori_passthrough_active(&f.satori));
+
+    action_toggle_passthrough(&f.satori, NOARG);
+    CHECK(f.newest.passthrough_off);
+    CHECK(!satori_passthrough_active(&f.satori));
+
+    // The other VM window is untouched.
+    CHECK(!f.middle.passthrough_off);
+    f.satori.focused = &f.middle;
+    CHECK(satori_passthrough_active(&f.satori));
+
+    // And it comes back: a suspension that could not be undone would make the
+    // config line stop meaning anything after one press.
+    f.satori.focused = &f.newest;
+    action_toggle_passthrough(&f.satori, NOARG);
+    CHECK(!f.newest.passthrough_off);
+    CHECK(satori_passthrough_active(&f.satori));
+
+    config_destroy(config);
+}
+
+static void test_passthrough_escape_with_nothing_focused_is_a_no_op(void) {
+    struct satori satori = {0};
+    action_toggle_passthrough(&satori, NOARG);
+    CHECK(satori.focused == NULL);
+}
+
+// The exemption is what makes passthrough safe to turn on. It is not an ordering
+// check that could be got wrong -- exempt bindings are simply never disabled.
+// Satori owns 100% of input and river ships no riverctl, so losing both of these
+// is a session with no way out and no way to fix it.
+static void test_passthrough_exempts_the_escape_routes(void) {
+    struct config *config = defaults_config();
+    if (!config) return;
+
+    const struct keybind *escape = find_keybind(config, XKB_KEY_p, MOD|SHFT);
+    const struct keybind *quit = find_keybind(config, XKB_KEY_e, MOD|SHFT);
+    CHECK(escape && escape->action == action_toggle_passthrough);
+    CHECK(quit && quit->action == action_exit_session);
+    CHECK(escape && escape->exempt);
+    CHECK(quit && quit->exempt);
+
+    // Exactly those two and nothing else. An exempt binding is one a passthrough
+    // app can never receive, so the set has to stay deliberate.
+    size_t exempt = 0;
+    for (size_t i = 0; i < config->len; i++) {
+        if (!config->binds[i].exempt) continue;
+        exempt++;
+        CHECK(config->binds[i].action == action_toggle_passthrough
+                || config->binds[i].action == action_exit_session);
+    }
+    CHECK(exempt == 2);
+
+    // What bindings_apply_enabled asks of each binding, in both states.
+    for (size_t i = 0; i < config->len; i++) {
+        const struct keybind *k = &config->binds[i];
+        CHECK(binding_stays_enabled(k, false));      // nothing is disabled with passthrough off
+        CHECK(binding_stays_enabled(k, true) == k->exempt);
+    }
+
+    config_destroy(config);
+}
+
+// The exemption belongs to the action, not the chord, so moving the escape hatch
+// to a comfortable key carries it. A chord-level flag would let a config file
+// relocate the binding and silently lose the only way back out.
+static void test_passthrough_exemption_follows_a_rebound_action(void) {
+    struct config *config = load_config_text(
+            "bind Mod+Shift+P none\n"
+            "bind Mod+Ctrl+Escape passthrough\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    CHECK(find_keybind(config, XKB_KEY_p, MOD|SHFT) == NULL);
+
+    const struct keybind *moved = find_keybind(config, XKB_KEY_Escape, MOD|CTRL);
+    CHECK(moved && moved->action == action_toggle_passthrough);
+    CHECK(moved && moved->exempt);
+
+    config_destroy(config);
 }
 
 // Deferred like every other action, for a sharper reason: reloading frees the
@@ -1015,6 +1199,14 @@ int main(void) {
     test_example_config_matches_the_defaults();
     test_reload_only_records_intent();
 
+    test_passthrough_matches_the_configured_app_ids();
+    test_passthrough_is_empty_by_default();
+    test_passthrough_follows_the_focused_window();
+    test_passthrough_escape_suspends_one_window();
+    test_passthrough_escape_with_nothing_focused_is_a_no_op();
+    test_passthrough_exempts_the_escape_routes();
+    test_passthrough_exemption_follows_a_rebound_action();
+
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
     if (failures) {
@@ -1029,6 +1221,7 @@ int main(void) {
            "  ok    keybind tables, media keys\n"
            "  ok    chord parsing, keysym lowering\n"
            "  ok    config merge, unbind, app-keys, rejection\n"
-           "  ok    binding table ownership, reload intent\n\nPASS\n");
+           "  ok    binding table ownership, reload intent\n"
+           "  ok    passthrough matching, escape toggle, exempt bindings\n\nPASS\n");
     return 0;
 }

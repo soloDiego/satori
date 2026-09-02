@@ -73,6 +73,11 @@ static void win_app_id(void *data, struct river_window_v1 *handle, const char *a
     struct window *win = data;
     free(win->app_id);
     win->app_id = app_id ? strdup(app_id) : NULL;
+
+    // Logged because it is the only way to find out what to write in a
+    // `passthrough` line. An app_id is not the window title and not the command
+    // name, and nothing else in the session will tell you it.
+    fprintf(stderr, "window: app_id %s\n", win->app_id ? win->app_id : "(none)");
 }
 static void win_title(void *data, struct river_window_v1 *handle, const char *title) {
     (void) handle;

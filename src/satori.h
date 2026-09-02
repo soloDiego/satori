@@ -51,6 +51,11 @@ struct satori {
     struct window   *raised;
     bool            default_output_dirty;   // the layer shell default output needs re-setting
 
+    // Last applied passthrough state, for logging only. The enabled set is
+    // recomputed from scratch every manage sequence, so logging unconditionally
+    // would write a line per sequence.
+    bool            passthrough;
+
     struct config   *config;        // owned; the live binding table
     char            *config_path;   // owned; NULL when there is nowhere to look
     // A reload was asked for. Applied in the next manage sequence, never at the
@@ -92,6 +97,12 @@ struct window {
     bool floating;
     int32_t float_x, float_y;
     int32_t float_width, float_height;   // <= 0 until the first float sizes them
+
+    // The escape binding has suspended passthrough for this window, so its
+    // bindings stay live even though its app_id is listed. Per window and for
+    // the window's lifetime: it is how you reach the WM keys inside a VM and
+    // then hand the keyboard back, without editing the config.
+    bool passthrough_off;
 
     bool fullscreen;        // desired state, not necessarily the applied one
     bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
@@ -139,14 +150,21 @@ struct keybind {
     satori_action       action;
     union satori_arg    arg;
     enum satori_arg_kind arg_kind;
+    bool                exempt;     // never disabled by passthrough; copied from the action
 };
 
 // An action as the config file spells it. Adding an action means adding a row
 // to action_specs in input.c; the name is the only handle a config file has.
+//
+// exempt is a property of the ACTION, not of the chord, so that re-binding the
+// escape hatch in a config file carries the exemption with it. A chord-level
+// flag would let a config move the escape binding and silently lose the only
+// way back out of passthrough.
 struct action_spec {
     const char              *name;
     satori_action           action;
     enum satori_arg_kind    arg_kind;
+    bool                    exempt;
 };
 
 // The live binding table, heap owned and rebuilt from scratch on every reload.
@@ -158,6 +176,13 @@ struct action_spec {
 struct config {
     struct keybind  *binds;
     size_t          len, cap;
+
+    // app_ids whose windows keep the keyboard to themselves, from `passthrough`
+    // lines. Owned strings, rebuilt wholesale on reload like binds. Unlike
+    // binds, nothing borrows a pointer into this array, so it may be grown at
+    // any time.
+    char            **passthrough;
+    size_t          passthrough_len, passthrough_cap;
 };
 
 struct binding {
@@ -208,6 +233,8 @@ void config_destroy(struct config *config);
 bool config_set(struct config *config, uint32_t keysym, uint32_t modifiers,
         const struct action_spec *spec, union satori_arg arg);  // copies arg.cmd
 void config_unset(struct config *config, uint32_t keysym, uint32_t modifiers);
+bool config_add_passthrough(struct config *config, const char *app_id);     // copies app_id
+bool config_is_passthrough(const struct config *config, const char *app_id);
 bool chord_parse(const char *chord, uint32_t *keysym, uint32_t *modifiers);
 bool modifiers_parse(const char *spec, uint32_t *modifiers);
 
@@ -219,7 +246,11 @@ const struct action_spec *action_from_name(const char *name);
 bool config_apply_defaults(struct config *config);
 void config_reload(struct satori *satori);          // manage sequence
 void bindings_create_all(struct satori *satori);
-void bindings_enable_pending(struct satori *satori);  // manage sequence
+void bindings_apply_enabled(struct satori *satori); // manage sequence
 void bindings_destroy_all(struct satori *satori);
+// The two pure halves of passthrough, split out so they can be unit tested --
+// bindings_apply_enabled itself sends requests on live proxies and cannot be.
+bool satori_passthrough_active(const struct satori *satori);
+bool binding_stays_enabled(const struct keybind *keybind, bool passthrough);
 
 #endif // SATORI_H

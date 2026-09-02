@@ -142,19 +142,52 @@ static void action_reload_config(struct satori *satori, union satori_arg arg) {
 
     satori->reload_pending = true;
 }
+// The escape hatch out of passthrough, and the reason passthrough is safe to
+// turn on at all. This action is exempt, so it is the one chord a passthrough
+// app can never swallow.
+//
+// Suspends passthrough for the focused window only, and until it is pressed
+// again -- reach the WM keys inside a VM, then hand the keyboard back, without
+// editing the config. Nothing to defer and no dirty flag: bindings_apply_enabled
+// recomputes the whole enabled set in the manage sequence that follows this
+// keypress, and reads passthrough_off directly.
+static void action_toggle_passthrough(struct satori *satori, union satori_arg arg) {
+    (void) arg;
+
+    struct window *win = satori->focused;
+    if (!win) return;
+
+    win->passthrough_off = !win->passthrough_off;
+    // The window is named because the toggle applies to whatever has focus, not
+    // to the passthrough app you were looking at. Press it while a terminal is
+    // focused and it flips a flag on the terminal -- harmless, but it logs the
+    // same two words, and reading them as "moonlight is back" is a wrong turn
+    // that costs an hour.
+    fprintf(stderr, "action: passthrough %s for %s\n",
+            win->passthrough_off ? "suspended" : "resumed",
+            win->app_id ? win->app_id : "(no app_id)");
+}
 
 // The names a config file uses to reach an action. This table is the only
 // handle it has, so an action that is not listed here cannot be bound.
+//
+// The last column is the passthrough exemption: an exempt binding is never
+// disabled, whatever window has focus. Exactly two are exempt, and both are
+// escape routes -- `passthrough` gets the keyboard back from an app, `exit`
+// gets out of the session. Satori owns 100% of input and river ships no
+// riverctl, so if a passthrough app could swallow both there would be no way
+// out of a session at all.
 static const struct action_spec action_specs[] = {
-    { "spawn",      action_spawn,             SATORI_ARG_CMD    },
-    { "close",      action_close_focused,     SATORI_ARG_NONE   },
-    { "fullscreen", action_toggle_fullscreen, SATORI_ARG_NONE   },
-    { "float",      action_toggle_floating,   SATORI_ARG_NONE   },
-    { "focus-next", action_focus_next,        SATORI_ARG_NONE   },
-    { "focus-prev", action_focus_prev,        SATORI_ARG_NONE   },
-    { "focus-app",  action_focus_app,         SATORI_ARG_LETTER },
-    { "reload",     action_reload_config,     SATORI_ARG_NONE   },
-    { "exit",       action_exit_session,      SATORI_ARG_NONE   },
+    { "spawn",       action_spawn,              SATORI_ARG_CMD,    false },
+    { "close",       action_close_focused,      SATORI_ARG_NONE,   false },
+    { "fullscreen",  action_toggle_fullscreen,  SATORI_ARG_NONE,   false },
+    { "float",       action_toggle_floating,    SATORI_ARG_NONE,   false },
+    { "focus-next",  action_focus_next,         SATORI_ARG_NONE,   false },
+    { "focus-prev",  action_focus_prev,         SATORI_ARG_NONE,   false },
+    { "focus-app",   action_focus_app,          SATORI_ARG_LETTER, false },
+    { "reload",      action_reload_config,      SATORI_ARG_NONE,   false },
+    { "passthrough", action_toggle_passthrough, SATORI_ARG_NONE,   true  },
+    { "exit",        action_exit_session,       SATORI_ARG_NONE,   true  },
 };
 
 const struct action_spec *action_from_name(const char *name) {
@@ -217,6 +250,10 @@ static const struct {
     // Re-reads the config file. Bound as well as wired to SIGHUP because it
     // still works when there is no terminal open to send a signal from.
     { XKB_KEY_r, MOD|SHFT, "reload", NULL },
+
+    // Suspends passthrough for the focused window. Exempt, so it stays live
+    // while every other binding is disabled -- see action_specs.
+    { XKB_KEY_p, MOD|SHFT, "passthrough", NULL },
 
     // Ends the session with no confirmation. River matches the unshifted
     // keysym: XKB_KEY_E binds without error and never fires.
@@ -344,7 +381,7 @@ void bindings_create_all(struct satori *satori) {
 // The teardown order is the load-bearing part: every proxy borrows a
 // &config->binds[i], so all of them have to go before the table they point into
 // is freed. Running inside the manage sequence means the fresh bindings are
-// enabled by bindings_enable_pending a few lines later, in this same sequence.
+// enabled by bindings_apply_enabled a few lines later, in this same sequence.
 void config_reload(struct satori *satori) {
     if (!satori->reload_pending) return;
     satori->reload_pending = false;
@@ -383,16 +420,70 @@ void seats_apply_focus(struct satori *satori) {
         applied = true;
     }
     satori->focus_dirty = deferred;
+    // Naming the window is not decoration: passthrough is keyed on app_id, and
+    // an unnamed "focus window" makes "which window has the keyboard" -- the
+    // only question that matters when a chord stops working -- unanswerable
+    // from the log. Same gap, and same fix, as `window: app_id`.
     if (applied) {
-        fprintf(stderr, "seat: focus %s\n", satori->focused ? "window" : "cleared");
+        if (satori->focused) {
+            fprintf(stderr, "seat: focus window (%s)\n",
+                    satori->focused->app_id ? satori->focused->app_id : "none");
+        } else {
+            fprintf(stderr, "seat: focus cleared\n");
+        }
     }
 }
 
-void bindings_enable_pending(struct satori *satori) {
+// Passthrough: hand the keyboard to the focused window's client instead of
+// binding it.
+//
+// Satori never sees raw key events -- river matches bindings itself and only
+// sends us `pressed` for chords that already matched, and the XML is explicit
+// that everything else goes straight to the focused surface. So there is no
+// lookup to skip and no key to forward. Disabling the bindings IS the forward:
+// with them off, the compositor stops matching those chords and delivers them
+// to the client like any other key.
+//
+// The escape binding is not "checked first", it is never disabled at all -- the
+// exemption is structural, so no ordering bug can shadow it. See action_specs.
+bool satori_passthrough_active(const struct satori *satori) {
+    const struct window *win = satori->focused;
+    if (!win || win->passthrough_off) return false;
+
+    return config_is_passthrough(satori->config, win->app_id);
+}
+
+// Its own function for the same reason window_position is: the loop below sends
+// requests on live proxies and cannot run in a unit test, and "the escape
+// binding survives passthrough" is the part most worth pinning.
+bool binding_stays_enabled(const struct keybind *keybind, bool passthrough) {
+    return !passthrough || keybind->exempt;
+}
+
+// Recomputed from scratch every manage sequence rather than driven by a dirty
+// flag. The inputs are focus, the focused window's app_id, the escape toggle and
+// the config, and app_id in particular arrives on its own event some time AFTER
+// the window does -- a flag set at focus time would miss it and leave a
+// passthrough app bound until something else moved. The walk is a bool compare
+// over a few dozen bindings and only sends a request when one actually changes.
+void bindings_apply_enabled(struct satori *satori) {
+    bool passthrough = satori_passthrough_active(satori);
+
     for (struct binding *bind = satori->bindings; bind; bind = bind->next) {
-        if (bind->enabled) continue;
-        river_xkb_binding_v1_enable(bind->handle);
-        bind->enabled = true;
+        bool want = binding_stays_enabled(bind->keybind, passthrough);
+        if (bind->enabled == want) continue;
+
+        if (want) {
+            river_xkb_binding_v1_enable(bind->handle);
+        } else {
+            river_xkb_binding_v1_disable(bind->handle);
+        }
+        bind->enabled = want;
+    }
+
+    if (passthrough != satori->passthrough) {
+        satori->passthrough = passthrough;
+        fprintf(stderr, "passthrough: %s\n", passthrough ? "on" : "off");
     }
 }
 

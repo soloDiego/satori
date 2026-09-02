@@ -16,7 +16,7 @@ The point is atomicity: a window is never half-configured on screen, and Satori
 never races an input event it has not seen yet.
 
 Consequence for the code: **an event handler records intent, a sequence applies
-it.** `binding_pressed` (`src/input.c:191`) sets `close_pending` or moves
+it.** `binding_pressed` (`src/input.c:293`) sets `close_pending` or moves
 `satori->focused`; `wm_manage_start` (`src/wm.c:27`) turns that into
 `river_window_v1_close` and `river_seat_v1_focus_window`.
 
@@ -24,7 +24,7 @@ it.** `binding_pressed` (`src/input.c:191`) sets `close_pending` or moves
 
 | State | Sequence | Satori |
 | --- | --- | --- |
-| dimensions, maximize/fullscreen, focus, close, capabilities, binding enable/disable | manage only | `windows_apply_fullscreen`, `windows_propose`, `windows_apply_closes`, `seats_apply_focus`, `bindings_enable_pending` |
+| dimensions, maximize/fullscreen, focus, close, capabilities, binding enable/disable | manage only | `windows_apply_fullscreen`, `windows_propose`, `windows_apply_closes`, `seats_apply_focus`, `bindings_apply_enabled` |
 | node position, stacking, borders, clip boxes | manage or render | `windows_render` |
 | layer shell default output | manage only | `layer_apply_default_output` |
 
@@ -79,7 +79,7 @@ constraint — only `enable`, `disable` and `set_layout_override` do. So a reloa
   reading and destroys the proxy libwayland is dispatching on. `action_reload`
   records intent like every other action; `config_reload` runs later.
 - The fresh bindings need `enable`, which *is* window management state.
-  `config_reload` runs first in `manage_start`, so `bindings_enable_pending`
+  `config_reload` runs first in `manage_start`, so `bindings_apply_enabled`
   enables them a few lines later in that same sequence.
 
 The protocol endorses this directly: the `pressed` event's description says the
@@ -105,7 +105,7 @@ broke it. On failure the running bindings are left exactly as they were.
 
 SIGHUP needs one extra step a keybind does not: a signal arrives with no manage
 sequence behind it, so the loop calls `manage_dirty` to ask for one
-(`src/main.c:150`). Without it the reload sits pending until something else
+(`src/main.c:155`). Without it the reload sits pending until something else
 happens to move a window. This is the protocol's own worked example for
 `manage_dirty` — its description names an internal state change the compositor
 cannot see.
@@ -178,6 +178,48 @@ Geometry:
   the window off screen on whatever output is left.
 - A window toggled while fullscreen only records the state. `windows_propose`
   skips fullscreen windows, so it is sized on the way out.
+
+## Passthrough, and why disabling *is* forwarding
+
+Satori has no raw key path. River matches bindings itself and sends `pressed`
+only for chords that already matched; the XML says the rest go straight to the
+focused surface, and that bound chords are **not** delivered to it. So there is
+no lookup to skip and no key event to forward.
+
+`bindings_apply_enabled` disables every non-exempt binding while the focused
+window's `app_id` is listed in `passthrough`. The compositor then stops matching
+those chords, and they reach the client like any other key. That is the whole
+mechanism.
+
+`enable` and `disable` are window management state, so this runs in the manage
+sequence. `action_toggle_passthrough` records nothing but a per-window flag; the
+sequence that follows the keypress applies it, same as every other action.
+
+**Recomputed every manage sequence, with no dirty flag.** The inputs are focus,
+the focused window's `app_id`, the escape toggle and the config — and `app_id`
+arrives on its own event *after* the `window` event that created the struct. A
+flag set at focus time would miss it and leave a passthrough app fully bound
+until something else moved a window. The walk is a bool compare per binding and
+only sends a request when one actually changes.
+
+The exemption is structural, not an ordering check: exempt bindings are never
+disabled, so no sequencing mistake can shadow the escape hatch. It lives on the
+`action_spec`, not the chord, so re-binding `passthrough` carries it — a
+chord-level flag would let a config move the binding and silently lose the only
+way back out. Two actions are exempt (`passthrough`, `exit`) so there are two
+independent ways out of a passthrough app.
+
+Stuck modifiers on a focus change are not Satori's to fix, and it has no way to:
+there is no request in either protocol to inject key events into a client. Nor
+is one needed — river never delivers press *or* release of a bound chord to the
+focused surface, and `wl_keyboard.leave` already obliges clients to treat every
+key as released.
+
+The one live version of that hazard is internal: disabling a binding between its
+`pressed` and `released` means the `released` may never arrive. Nothing strands
+today, because `binding_released` is a no-op. It becomes real with key repeat —
+whatever tracks a repeating action has to be cancelled where the binding is
+disabled.
 
 ## Recency, and why there are two window lists
 

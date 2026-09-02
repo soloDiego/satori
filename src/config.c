@@ -179,7 +179,46 @@ bool config_set(struct config *config, uint32_t keysym, uint32_t modifiers,
         .action    = spec->action,
         .arg_kind  = spec->arg_kind,
         .arg       = cmd ? (union satori_arg){ .cmd = cmd } : arg,
+        // Carried from the action, so re-binding the escape hatch to another
+        // chord moves the exemption with it.
+        .exempt    = spec->exempt,
     };
+    return true;
+}
+
+// The passthrough set: app_ids whose windows keep the keyboard to themselves.
+//
+// Matched case-insensitively, like the app_id letter lookup. The config is
+// written by hand and a client's capitalisation is its own choice, so an
+// `Org.Qemu` in the file must not silently match nothing.
+bool config_is_passthrough(const struct config *config, const char *app_id) {
+    // A window that has not sent an app_id yet matches nothing rather than
+    // everything -- the same rule window_find_by_app uses, and here the cost of
+    // getting it backwards is a window that swallows every binding.
+    if (!config || !app_id || !*app_id) return false;
+
+    for (size_t i = 0; i < config->passthrough_len; i++) {
+        if (strcasecmp(config->passthrough[i], app_id) == 0) return true;
+    }
+    return false;
+}
+
+bool config_add_passthrough(struct config *config, const char *app_id) {
+    if (!app_id || !*app_id) return false;
+    if (config_is_passthrough(config, app_id)) return true;     // listing one twice is not an error
+
+    if (config->passthrough_len == config->passthrough_cap) {
+        size_t cap = config->passthrough_cap ? config->passthrough_cap * 2 : 8;
+        char **grown = realloc(config->passthrough, cap * sizeof *grown);
+        if (!grown) return false;
+        config->passthrough = grown;
+        config->passthrough_cap = cap;
+    }
+
+    char *copy = strdup(app_id);
+    if (!copy) return false;
+
+    config->passthrough[config->passthrough_len++] = copy;
     return true;
 }
 
@@ -306,6 +345,28 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
     return ok;
 }
 
+// One line may list several app_ids, so a `passthrough qemu virt-manager` reads
+// the way it would be said. Repeating the directive accumulates rather than
+// replacing -- there is no built-in set to merge over, so nothing needs taking
+// away and `none` would have nothing to mean.
+static bool passthrough_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path) {
+    if (directive->params_len < 1) {
+        fprintf(stderr, "config: %s:%d: passthrough needs at least one app_id\n",
+                path, directive->lineno);
+        return false;
+    }
+
+    for (size_t i = 0; i < directive->params_len; i++) {
+        if (!config_add_passthrough(config, directive->params[i])) {
+            fprintf(stderr, "config: %s:%d: bad app_id '%s'\n", path, directive->lineno,
+                    directive->params[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
 // Resolved before the generated letter block goes in, so that an explicit bind
 // line on a letter chord lands on top of the generated one rather than under it.
 static bool app_keys_directive(const struct scfg_directive *directive, const char *path,
@@ -372,6 +433,8 @@ struct config *config_load(const char *path, bool with_defaults) {
         const struct scfg_directive *directive = &block.directives[i];
         if (strcmp(directive->name, "bind") == 0) {
             if (!bind_directive(config, directive, path)) ok = false;
+        } else if (strcmp(directive->name, "passthrough") == 0) {
+            if (!passthrough_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "app-keys") != 0) {
             fprintf(stderr, "config: %s:%d: unknown directive '%s'\n", path,
                     directive->lineno, directive->name);
@@ -393,6 +456,10 @@ void config_destroy(struct config *config) {
 
     for (size_t i = 0; i < config->len; i++) keybind_finish(&config->binds[i]);
     free(config->binds);
+
+    for (size_t i = 0; i < config->passthrough_len; i++) free(config->passthrough[i]);
+    free(config->passthrough);
+
     free(config);
 }
 

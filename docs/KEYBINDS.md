@@ -19,15 +19,16 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`), Alt = `MOD1`.
 | Mod+K | `focus-prev` | — | previous window in list order, wraps |
 | Mod+Shift+Space | `float` | — | floating window keeps its own size and position, or back to maximized |
 | Mod+Shift+R | `reload` | — | re-reads the config file; keeps the running bindings if it does not parse |
-| Mod+Shift+E | `exit` | — | ends the session, no confirmation; every client is disconnected |
+| Mod+Shift+P | `passthrough` | — | suspends passthrough for the focused window, or restores it. **Never disabled** |
+| Mod+Shift+E | `exit` | — | ends the session, no confirmation; every client is disconnected. **Never disabled** |
 | Mod+Alt+A … Mod+Alt+Z | `focus-app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
 
-The built-ins are written as action *names* (`defaults`, `src/input.c:205`) and
+The built-ins are written as action *names* (`defaults`, `src/input.c:232`) and
 installed through the same `config_set` path a config file uses, so a default
 that would be rejected in a config file is rejected here too.
 
 The 26 letter bindings are generated, not typed out (`config_add_app_keys`,
-`src/config.c:209`); `mod4|mod1` carries nothing else, so the whole
+`src/config.c:248`); `mod4|mod1` carries nothing else, so the whole
 `Mod+<letter>` space stays free for ordinary bindings.
 
 Which window `Mod+Alt+<letter>` picks:
@@ -67,11 +68,53 @@ Mod+Space and Mod+Shift+Space are the same keysym. River matches the *unshifted*
 keysym, so the modifiers are what tell them apart — `0x40` vs `0x41`.
 
 `action_exit_session` needs `river_window_manager_v1` v4; on an older
-compositor it logs and does nothing (`src/input.c:53`).
+compositor it logs and does nothing (`src/input.c:51`).
 
 Mod+Alt+&lt;letter&gt; is a no-op when the only match is the window already focused —
 the ring comes back to it and `window_focus` returns early. Same shape as Mod+J/K
 with one window open.
+
+## Passthrough
+
+`passthrough <app_id>...` in the config file hands the keyboard to that app's
+windows — a VM console, a nested compositor, a remote desktop. Nothing is listed
+by default, so this changes nothing until asked for. Format and matching rules
+in [CONFIG.md](CONFIG.md#passthrough).
+
+**Satori never sees raw key events.** River matches bindings itself and only
+sends `pressed` for chords that already matched; everything else goes straight
+to the focused surface. So passthrough is not a lookup that gets skipped — it
+**disables the bindings**, and the compositor then delivers those keys to the
+client like any other key.
+
+| | |
+| --- | --- |
+| Applied in | the manage sequence (`bindings_apply_enabled`, `src/input.c:454`) |
+| Recomputed | every manage sequence, not from a dirty flag |
+| Exempt | `passthrough` and `exit` — never disabled, whatever chord they carry |
+
+Recomputed unconditionally because `app_id` arrives on its own event *after* the
+window is created. A flag set at focus time would miss it and leave a
+passthrough app fully bound until something else moved a window.
+
+The exemption is **structural, not an ordering check**: exempt bindings are
+never disabled, so nothing can shadow the escape hatch. It is a property of the
+action, so re-binding `passthrough` carries it. Two are exempt rather than one
+because Satori owns every binding and river ships no `riverctl` — a session
+where an app could swallow both would have no way out.
+
+Modifiers stuck across a focus change are **the compositor's problem, not
+ours**: river never delivers press *or* release of a bound chord to the focused
+surface, so a client cannot see the press half of a binding, and `wl_keyboard.leave`
+already requires clients to treat all keys as released. There is no request in
+`river-window-management-v1` or `river-xkb-bindings-v1` to inject key events
+into a client, and none is needed.
+
+The one real version of that hazard is Satori's own: disabling a binding between
+its `pressed` and `released` means the `released` may never arrive. Nothing
+strands today — `binding_released` is a no-op — but it becomes live if key
+repeat is implemented. A repeating action would need cancelling in
+`bindings_apply_enabled` at the point a binding is disabled.
 
 ## Media keys
 
@@ -102,7 +145,7 @@ the poll loop.
 rather than gets louder.
 
 Brightness writes `/sys/class/backlight/intel_backlight/brightness` directly
-(`BRIGHTNESS_CMD`, `src/input.c:148`) rather than shelling out to
+(`BRIGHTNESS_CMD`, `src/input.c:205`) rather than shelling out to
 `brightnessctl` or `light` — neither is installed, and the file is group-writable
 to `video`. The floor of 1% of max is load-bearing: a backlight at 0 is a black
 screen, and the key that raises it again is one you can no longer see. The
@@ -119,7 +162,7 @@ bindings — `spawn` is the reason it exists. Actions that ignore it still take
 it. Members: `cmd` (`const char *`), `u` (`uint32_t`).
 
 Which member is live is recorded alongside it as an `enum satori_arg_kind`
-(`src/satori.h:130`). That is not redundant: the table is heap-owned and rebuilt
+(`src/satori.h:141`). That is not redundant: the table is heap-owned and rebuilt
 on every reload, so a keybind has to be freeable without consulting its action,
 and `arg.u` aliases the same storage as `arg.cmd`. Freeing unconditionally would
 treat a `focus-app` letter as a pointer.
@@ -161,9 +204,9 @@ does nothing. `scripts/test-exit.sh` asserts the exact pair Mod+Shift+E produces
 - One binding per keysym+modifier pair per seat. `config_set` enforces it by
   replacing in place; two on one chord would make which fires compositor policy.
 - Bindings are created per seat, at `wm: seat` (`seat_bindings_create`,
-  `src/input.c:301`), and enabled in the next manage sequence. A key pressed
+  `src/input.c:332`), and enabled in the next manage sequence. A key pressed
   before that reaches the focused client instead.
-- 41 bindings per seat by default: 15 built-in, 26 letters. A config file
+- 42 bindings per seat by default: 16 built-in, 26 letters. A config file
   changes the count.
 - Actions run outside a manage sequence and must not touch window management
   state. See [SEQUENCES.md](SEQUENCES.md).

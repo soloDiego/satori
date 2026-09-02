@@ -28,6 +28,7 @@ RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
 APP_PID=""
+PT_PID=""
 LAYER_PID=""
 SECOND_PID=""
 SECOND_LOG="$(mktemp -t satori-second.XXXXXX.log)"
@@ -38,6 +39,7 @@ cleanup() {
     [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
     [ -n "$FS_PID" ] && kill "$FS_PID" 2>/dev/null
     [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
+    [ -n "$PT_PID" ] && kill "$PT_PID" 2>/dev/null
     [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
@@ -373,6 +375,68 @@ if [ -x "$KEYPRESS" ]; then
     press super+shift+t
     check_count "the running bindings survive a failed reload" \
         'binding: pressed keysym 0x74 mods 0x41' "$((presses_before + 1))"
+
+    # Passthrough, end to end. Satori never sees raw key events -- river matches
+    # bindings itself -- so passthrough is implemented by DISABLING the bindings,
+    # which is what makes the compositor deliver those keys to the client. The
+    # only thing observable from outside is that a chord stops firing, so the
+    # assertions are counts of `binding: pressed` before and after.
+    printf 'bind Mod+Shift+T spawn foot\npassthrough ptest\n' > "$CONF"
+    nested_kill HUP
+    check "reloads with a passthrough app" 'config: reloaded [0-9]+ bindings'
+
+    WAYLAND_DISPLAY="$NESTED" foot --app-id=ptest sh -c 'sleep 60' >/dev/null 2>&1 &
+    PT_PID=$!
+
+    # The app_id has to be logged or a `passthrough` line cannot be written at
+    # all: it is not the window title and not the command name, and nothing else
+    # in the session reports it.
+    check "logs the app_id it matched on" 'window: app_id ptest'
+
+    # It opens focused, so passthrough turns on by itself. app_id arrives on its
+    # own event after the window one; recomputing every manage sequence rather
+    # than on a focus-time flag is what makes that ordering not matter.
+    check "passthrough turns on for a listed app_id" 'passthrough: on'
+
+    # The whole point: a normal binding must stop reaching satori.
+    presses_before="$(grep -cE 'binding: pressed keysym 0x74 mods 0x41' "$LOG")"
+    press super+shift+t
+    sleep 0.5
+    if [ "$(grep -cE 'binding: pressed keysym 0x74 mods 0x41' "$LOG")" -eq "$presses_before" ]; then
+        echo "  ok    a bound chord no longer fires during passthrough"
+    else
+        echo "  FAIL  a bound chord still fired during passthrough"
+        FAILED=1
+    fi
+
+    # And the half that keeps the session recoverable: the escape binding is
+    # exempt, so it is never disabled and cannot be shadowed. If this one is
+    # wrong the app owns the keyboard permanently.
+    press super+shift+p
+    check "the escape binding still fires during passthrough" \
+        'binding: pressed keysym 0x70 mods 0x41'
+    check "the escape binding suspends passthrough" 'action: passthrough suspended'
+    check "passthrough turns off for that window"   'passthrough: off'
+
+    press super+shift+t
+    check_count "the bindings come back after the escape" \
+        'binding: pressed keysym 0x74 mods 0x41' "$((presses_before + 1))"
+
+    # The reloaded Mod+Shift+T spawns a foot, which takes focus off the ptest
+    # window -- so getting back to it is what proves the toggle restores rather
+    # than being a one-way switch. Its app_id is still listed.
+    press super+alt+p
+    check "reaches the passthrough window again" "action: focus app 'p'"
+
+    on_before="$(grep -cE 'passthrough: on' "$LOG")"
+    press super+shift+p
+    check "the escape binding resumes passthrough" 'action: passthrough resumed'
+    check_count "passthrough turns back on" 'passthrough: on' "$((on_before + 1))"
+
+    # Focus leaving the app is enough on its own; nothing has to be toggled.
+    kill "$PT_PID" 2>/dev/null
+    PT_PID=""
+    check_count "passthrough ends when the window closes" 'passthrough: off' 2
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi

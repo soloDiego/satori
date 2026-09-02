@@ -1,7 +1,7 @@
 # Config file
 
 `$XDG_CONFIG_HOME/satori/config`, else `~/.config/satori/config`
-(`config_default_path`, `src/config.c:395`). Optional — without it Satori runs
+(`config_default_path`, `src/config.c:467`). Optional — without it Satori runs
 the built-in table.
 
 [scfg](https://git.sr.ht/~emersion/scfg) format, parsed by `libscfg`. `#`
@@ -36,13 +36,17 @@ not unbind that chord. Use `none` for that.
 | `bind` | chord, `none` | unbinds the chord, including a built-in |
 | `app-keys` | modifiers | modifiers for the 26 generated `focus-app` letter bindings |
 | `app-keys` | `none` | omits the generated block entirely |
+| `passthrough` | one or more `app_id`s | those windows get the keyboard to themselves |
 
-`app-keys` defaults to `Mod+Alt`. Repeating a directive is allowed; the last one
-wins.
+`app-keys` defaults to `Mod+Alt`. Repeating it is allowed; the last one wins.
+
+`passthrough` **accumulates** instead — there is no built-in set to merge over,
+so nothing needs taking away and it has no `none` form. Listing an `app_id`
+twice is not an error.
 
 ## Actions
 
-`action_specs`, `src/input.c:148`. An action not listed here cannot be bound.
+`action_specs`, `src/input.c:174`. An action not listed here cannot be bound.
 
 | Action | Args | Effect |
 | --- | --- | --- |
@@ -54,7 +58,11 @@ wins.
 | `focus-prev` | none | previous window in list order, wraps |
 | `focus-app` | one letter | focuses a window whose `app_id` starts with that letter |
 | `reload` | none | re-reads this file |
+| `passthrough` | none | suspends passthrough for the focused window, or restores it |
 | `exit` | none | ends the session, no confirmation |
+
+`passthrough` and `exit` are **exempt**: they are the only two actions never
+disabled by passthrough. See [Passthrough](#passthrough).
 
 `spawn` joins its remaining parameters with single spaces, so quoting is only
 needed to protect runs of whitespace:
@@ -78,7 +86,7 @@ xkbcommon keysym name. Zero modifiers is legal.
 | mod4 | `Mod`, `Super`, `Logo`, `Mod4` | 64 |
 | mod5 | `Mod5` | 128 |
 
-Names are case-insensitive (`modifier_names`, `src/config.c:30`). Capslock (2)
+Names are case-insensitive (`modifier_names`, `src/config.c:27`). Capslock (2)
 and numlock (16) are excluded upstream: locked modifiers are not usable in
 bindings.
 
@@ -95,7 +103,7 @@ bit. Writing `E` yourself would otherwise bind without error and never fire.
 The table is assembled in this order, each layer overriding the one above on the
 same keysym+modifier pair:
 
-1. Built-in bindings (`defaults`, `src/input.c:205`)
+1. Built-in bindings (`defaults`, `src/input.c:232`)
 2. The generated `focus-app` letter block, unless `app-keys none`
 3. `bind` lines, in file order
 
@@ -108,6 +116,53 @@ One binding per keysym+modifier pair — `config_set` (`src/config.c:148`)
 replaces in place rather than appending. Which of two bindings on one chord
 would fire is compositor policy.
 
+## Passthrough
+
+Apps that need the whole keyboard — a VM console, a nested compositor, a remote
+desktop — where `Mod+Q` should close the *guest's* window, not the VM.
+
+```
+passthrough org.qemu.qemu virt-manager
+passthrough org.remmina.Remmina
+```
+
+While a listed window has focus, every binding is disabled except the exempt
+ones, and those keys reach the client instead.
+
+| | |
+| --- | --- |
+| Matching | whole `app_id`, case-insensitive. Not a prefix — unlike `focus-app` |
+| No `app_id` yet | matches nothing |
+| Nothing focused | passthrough off |
+| Exempt | `passthrough` and `exit`, whatever chords they are bound to |
+| Escape | `Mod+Shift+P` by default — suspends passthrough for that one window |
+| Logs | `passthrough: on` / `passthrough: off` on change |
+
+The escape is per window and lasts the window's lifetime: suspend it, use the WM
+keys, press it again to hand the keyboard back. It does not turn the feature off
+globally, and another window of the same app is unaffected.
+
+**The exemption belongs to the action, not the chord.** Re-binding `passthrough`
+to another key carries it:
+
+```
+bind Mod+Shift+P none
+bind Mod+Ctrl+Escape passthrough
+```
+
+Satori owns every binding and river ships no `riverctl`, so `exit` is exempt as
+well — two independent ways out rather than one.
+
+Getting an `app_id`: Satori logs one per window as it arrives.
+
+```sh
+grep 'window: app_id' /tmp/satori.log
+```
+
+It is not the window title and not the command name — Moonlight's binary is
+`moonlight` and its `app_id` is `com.moonlight_stream.Moonlight`. A window that
+has not sent one logs `(none)`.
+
 ## Reloading
 
 | Trigger | Notes |
@@ -116,8 +171,8 @@ would fire is compositor policy.
 | `SIGHUP` | `pkill -HUP satori`; for editor hooks and scripts |
 
 Both set `reload_pending`; the reload itself runs in the next manage sequence
-(`config_reload`, `src/input.c:348`). SIGHUP additionally requests that sequence
-with `manage_dirty` (`src/main.c:150`) — a signal, unlike a keypress, does not
+(`config_reload`, `src/input.c:379`). SIGHUP additionally requests that sequence
+with `manage_dirty` (`src/main.c:155`) — a signal, unlike a keypress, does not
 bring one with it.
 
 A reload replaces every `river_xkb_binding_v1` proxy on every seat. Changed
@@ -143,7 +198,7 @@ caused it.
 Startup logs the count and the path it read:
 
 ```
-config: 41 bindings from /home/diego/.config/satori/config
+config: 42 bindings from /home/diego/.config/satori/config
 ```
 
 ## See also

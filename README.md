@@ -40,6 +40,11 @@ there. No cycling, nothing to read on screen.
 Super+Return opens a terminal, Super+Space a launcher, Super+Q closes the
 focused window, Super+J/K cycle focus.
 
+Apps that need the whole keyboard — a VM, a nested compositor, a remote desktop
+— can have it: list their `app_id` under `passthrough` in the config and Satori
+stops binding keys while one is focused. Super+Shift+P and Super+Shift+E are
+never disabled, so you are never locked in.
+
 To change any of it:
 
 ```sh

@@ -92,6 +92,20 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   broken config, **and the previously loaded binding still firing**. The second
   half is the assertion that matters: satori owns 100% of input, so a reload that
   cleared the table and then failed would be a session with no way out
+- `window: app_id ptest` -- the `app_id` is logged as it arrives. Load-bearing
+  rather than cosmetic: it is the only way to find out what to write in a
+  `passthrough` line, since an `app_id` is neither the window title nor the
+  command name
+- the passthrough chain, against a `foot --app-id=ptest` and a config listing
+  `ptest`: `passthrough: on` when it takes focus, then super+shift+t (bound by
+  the reload above) **not** firing, then super+shift+p firing anyway and logging
+  `action: passthrough suspended`, then super+shift+t firing again, then a second
+  super+shift+p restoring it, then `passthrough: off` when the window closes.
+  The negative assertion in the middle is the feature: passthrough is
+  implemented by *disabling* the bindings, so a chord that stops reaching satori
+  is the only thing observable from outside. The escape half is the one that
+  keeps the session recoverable -- with the exemption removed, 8 assertions go
+  red and the app owns the keyboard permanently
 - `layer: focus exclusive` then `focus none` plus one more `seat: focus window`
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
@@ -317,6 +331,14 @@ two tests that pin it down are `test_focus_app_jumps_to_the_most_recent_match`
 (the older window is the more recently used one, so creation order gives the
 wrong answer) and `test_focus_app_cycles_within_an_app_in_a_stable_ring` (three
 windows of one app; a recency walk visits only two of them, forever).
+
+Passthrough splits the same way. `bindings_apply_enabled` sends requests on live
+proxies and cannot run in a unit test, so the two decisions it makes are their
+own functions: `satori_passthrough_active` (is the focused window's `app_id`
+listed, and has the escape suspended it) and `binding_stays_enabled` (is this
+binding exempt). Both are unit tested, including that the exempt set is exactly
+`passthrough` and `exit` and that re-binding the escape action carries the
+exemption -- the smoke test can see a chord stop firing, but not *why*.
 
 The layer-focus deferral test runs last on purpose: with the guard removed it
 walks into a request on a NULL proxy and segfaults. That is still red, but it
