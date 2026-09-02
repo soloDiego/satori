@@ -77,8 +77,9 @@ build/keypress: tests/keypress.c $(VK_C) $(VK_H) | build
 # Includes src/input.c (hence the explicit prerequisite), so link everything
 # except build/input.o. window.o pulls in output.o for the output lookup, and
 # both of those plus input.c pull in layer.o. config.o is the parser under test;
-# it calls back into the included input.c for action_from_name.
-TEST_OBJ := build/window.o build/output.o build/layer.o build/config.o
+# it calls back into the included input.c for action_from_name. log.o backs the
+# satori_log every one of them calls.
+TEST_OBJ := build/window.o build/output.o build/layer.o build/config.o build/log.o
 
 build/test-actions: tests/test_actions.c src/input.c src/satori.h example/config $(TEST_OBJ) $(PROTO_O) | build
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(PKG_CFLAGS) -o $@ \

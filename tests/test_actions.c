@@ -1044,9 +1044,16 @@ static void test_passthrough_follows_the_focused_window(void) {
     config_destroy(config);
 }
 
-// The escape binding suspends passthrough for one window, not globally: another
-// window of the same app keeps it.
-static void test_passthrough_escape_suspends_one_window(void) {
+// The escape binding suspends passthrough per app_id, so every window of that
+// app is covered -- including ones that do not exist yet.
+//
+// This is THE bug the app_id key exists to fix. Moonlight destroys its window
+// and creates a new one when a stream starts, and with the flag on struct window
+// the suspension died with it: passthrough re-armed mid-stream, the keyboard
+// vanished again, and nothing in the log said why. The fixture models that by
+// suspending one window and then asking about a different struct with the same
+// app_id.
+static void test_passthrough_escape_survives_a_recreated_window(void) {
     struct config *config = load_config_text("passthrough org.qemu.qemu\n");
     CHECK(config != NULL);
     if (!config) return;
@@ -1059,21 +1066,59 @@ static void test_passthrough_escape_suspends_one_window(void) {
     CHECK(satori_passthrough_active(&f.satori));
 
     action_toggle_passthrough(&f.satori, NOARG);
-    CHECK(f.newest.passthrough_off);
     CHECK(!satori_passthrough_active(&f.satori));
 
-    // The other VM window is untouched.
-    CHECK(!f.middle.passthrough_off);
+    // A different struct window entirely -- the app's replacement window -- and
+    // the suspension still holds. On the old per-window flag this was the check
+    // that came back true and took the keyboard away.
     f.satori.focused = &f.middle;
-    CHECK(satori_passthrough_active(&f.satori));
+    CHECK(!satori_passthrough_active(&f.satori));
+
+    // Another app is unaffected: suspending one must not disarm the rest.
+    CHECK(!config_is_passthrough(config, "foot"));
 
     // And it comes back: a suspension that could not be undone would make the
-    // config line stop meaning anything after one press.
-    f.satori.focused = &f.newest;
+    // config line stop meaning anything after one press. Resuming from the
+    // replacement window works, which is the only window still on screen.
     action_toggle_passthrough(&f.satori, NOARG);
-    CHECK(!f.newest.passthrough_off);
+    CHECK(satori_passthrough_active(&f.satori));
+    f.satori.focused = &f.newest;
     CHECK(satori_passthrough_active(&f.satori));
 
+    passthrough_suspend_free(&f.satori);
+    config_destroy(config);
+}
+
+// Case-insensitive, matching config_is_passthrough. Load-bearing rather than
+// defensive: the suspend is stored from one window's app_id and then tested
+// against a *different* window's, and nothing promises an app spells its app_id
+// identically across a window it destroyed and one it recreated. Suspending from
+// the same string it was stored under would pass under strcmp too, so the two
+// windows here deliberately disagree on case.
+static void test_passthrough_escape_matches_app_id_case_insensitively(void) {
+    struct config *config = load_config_text("passthrough org.QEMU.qemu\n");
+    CHECK(config != NULL);
+    if (!config) return;
+
+    struct fixture f;
+    fixture_init(&f);
+    f.satori.config = config;
+    fixture_app_ids(&f, "ORG.qemu.QEMU", "org.qemu.qemu", "foot");
+
+    CHECK(satori_passthrough_active(&f.satori));        // config match is case-blind
+    action_toggle_passthrough(&f.satori, NOARG);
+    CHECK(!satori_passthrough_active(&f.satori));
+
+    // The replacement window, spelled differently. The suspend must still hold.
+    f.satori.focused = &f.middle;
+    CHECK(!satori_passthrough_active(&f.satori));
+
+    // And resuming from that spelling clears the entry stored under the other.
+    action_toggle_passthrough(&f.satori, NOARG);
+    CHECK(f.satori.suspended_len == 0);
+    CHECK(satori_passthrough_active(&f.satori));
+
+    passthrough_suspend_free(&f.satori);
     config_destroy(config);
 }
 
@@ -1081,6 +1126,17 @@ static void test_passthrough_escape_with_nothing_focused_is_a_no_op(void) {
     struct satori satori = {0};
     action_toggle_passthrough(&satori, NOARG);
     CHECK(satori.focused == NULL);
+    CHECK(satori.suspended_len == 0);
+}
+
+// A window that has not reported an app_id yet can never be in passthrough, so
+// there is nothing to suspend. Recording one would put a NULL in the set.
+static void test_passthrough_escape_with_no_app_id_is_a_no_op(void) {
+    struct fixture f;
+    fixture_init(&f);           // app_ids are all NULL
+
+    action_toggle_passthrough(&f.satori, NOARG);
+    CHECK(f.satori.suspended_len == 0);
 }
 
 // The exemption is what makes passthrough safe to turn on. It is not an ordering
@@ -1202,7 +1258,9 @@ int main(void) {
     test_passthrough_matches_the_configured_app_ids();
     test_passthrough_is_empty_by_default();
     test_passthrough_follows_the_focused_window();
-    test_passthrough_escape_suspends_one_window();
+    test_passthrough_escape_survives_a_recreated_window();
+    test_passthrough_escape_matches_app_id_case_insensitively();
+    test_passthrough_escape_with_no_app_id_is_a_no_op();
     test_passthrough_escape_with_nothing_focused_is_a_no_op();
     test_passthrough_exempts_the_escape_routes();
     test_passthrough_exemption_follows_a_rebound_action();

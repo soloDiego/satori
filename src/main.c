@@ -27,18 +27,18 @@ static void registry_global(void *data, struct wl_registry *registry,
         // The listener goes on immediately: unavailable can be the first and
         // only event on this object, so a roundtrip first would miss it.
         river_window_manager_v1_add_listener(satori->wm, &wm_listener, satori);
-        fprintf(stderr, "bound river_window_manager_v1 v%u\n", v);
+        satori_log("bound river_window_manager_v1 v%u\n", v);
     } else if (strcmp(interface, river_xkb_bindings_v1_interface.name) == 0) {
         uint32_t v = clamp_version(version, SATORI_XKB_BINDINGS_VERSION);
         satori->xkb = wl_registry_bind(registry, name, &river_xkb_bindings_v1_interface, v);
-        fprintf(stderr, "bound river_xkb_bindings_v1 v%u\n", v);   // no events on this object
+        satori_log("bound river_xkb_bindings_v1 v%u\n", v);   // no events on this object
     } else if (strcmp(interface, river_layer_shell_v1_interface.name) == 0) {
         // Binding this is what tells river we support layer surfaces. Without
         // it the compositor closes every one, so bars, launchers and wallpapers
         // silently never map.
         uint32_t v = clamp_version(version, SATORI_LAYER_SHELL_VERSION);
         satori->layer_shell = wl_registry_bind(registry, name, &river_layer_shell_v1_interface, v);
-        fprintf(stderr, "bound river_layer_shell_v1 v%u\n", v);    // no events on this object
+        satori_log("bound river_layer_shell_v1 v%u\n", v);    // no events on this object
     }
 }
 static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {
@@ -52,7 +52,7 @@ static const struct wl_registry_listener registry_listener = {
 int main(void) {
     struct wl_display *display = wl_display_connect(NULL);
     if (!display) {
-        fprintf(stderr, "could not connect to wayland display "
+        satori_log("could not connect to wayland display "
                 "(is WAYLAND_DISPLAY set and a compositor running?)\n");
         return 1;
     }
@@ -67,16 +67,16 @@ int main(void) {
         // A broken file is not fatal at startup. Falling back to the built-ins
         // leaves a session that can still open a terminal, fix the config, and
         // reload -- which beats no bindings at all.
-        fprintf(stderr, "config: falling back to the built-in bindings\n");
+        satori_log("config: falling back to the built-in bindings\n");
         satori.config = config_load(NULL, true);
     }
     if (!satori.config) {
-        fprintf(stderr, "could not build a key binding table\n");
+        satori_log("could not build a key binding table\n");
         free(satori.config_path);
         wl_display_disconnect(display);
         return 1;
     }
-    fprintf(stderr, "config: %zu bindings from %s\n", satori.config->len,
+    satori_log("config: %zu bindings from %s\n", satori.config->len,
             satori.config_path ? satori.config_path : "the built-in table");
 
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -94,7 +94,7 @@ int main(void) {
     int sigfd = signalfd(-1, &mask, SFD_CLOEXEC);
 
     if (sigfd == -1) {
-        fprintf(stderr, "signalfd failed: %s\n", strerror(errno));
+        satori_log("signalfd failed: %s\n", strerror(errno));
         config_destroy(satori.config);
         free(satori.config_path);
         wl_registry_destroy(registry);
@@ -132,7 +132,7 @@ int main(void) {
         if (ret < 0) {
             wl_display_cancel_read(display);
             if (errno == EINTR) continue;
-            fprintf(stderr, "poll %s\n", strerror(errno));
+            satori_log("poll %s\n", strerror(errno));
             break;
         }
 
@@ -161,7 +161,7 @@ int main(void) {
 
     wl_display_roundtrip(display);
     if (!satori.wm) {
-        fprintf(stderr, "could not bind to global river_window_manager_v1\n");
+        satori_log("could not bind to global river_window_manager_v1\n");
         config_destroy(satori.config);
         free(satori.config_path);
         wl_registry_destroy(registry);
@@ -184,6 +184,7 @@ int main(void) {
     windows_destroy_all(&satori);
     outputs_destroy_all(&satori);
     config_destroy(satori.config);
+    passthrough_suspend_free(&satori);
     free(satori.config_path);
 
     // After the per-output and per-seat layer objects, which the walks above destroy.

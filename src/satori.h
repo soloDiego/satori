@@ -56,6 +56,17 @@ struct satori {
     // would write a line per sequence.
     bool            passthrough;
 
+    // app_ids the escape binding has suspended passthrough for. Owned copies.
+    //
+    // Keyed on app_id and deliberately NOT on struct window: an app is free to
+    // destroy and recreate its window, and moonlight does exactly that when a
+    // stream starts. A flag living on the window goes with it, so passthrough
+    // silently re-arms mid-stream and the keyboard is gone again with no
+    // keypress in the log to explain why. Living here also means it survives a
+    // config reload, which rebuilds config but not this.
+    char            **suspended;
+    size_t          suspended_len, suspended_cap;
+
     struct config   *config;        // owned; the live binding table
     char            *config_path;   // owned; NULL when there is nowhere to look
     // A reload was asked for. Applied in the next manage sequence, never at the
@@ -97,12 +108,6 @@ struct window {
     bool floating;
     int32_t float_x, float_y;
     int32_t float_width, float_height;   // <= 0 until the first float sizes them
-
-    // The escape binding has suspended passthrough for this window, so its
-    // bindings stay live even though its app_id is listed. Per window and for
-    // the window's lifetime: it is how you reach the WM keys inside a VM and
-    // then hand the keyboard back, without editing the config.
-    bool passthrough_off;
 
     bool fullscreen;        // desired state, not necessarily the applied one
     bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
@@ -252,5 +257,10 @@ void bindings_destroy_all(struct satori *satori);
 // bindings_apply_enabled itself sends requests on live proxies and cannot be.
 bool satori_passthrough_active(const struct satori *satori);
 bool binding_stays_enabled(const struct keybind *keybind, bool passthrough);
+void passthrough_suspend_free(struct satori *satori);   // shutdown
+
+// log.c -- timestamped, flushed diagnostics. The format attribute keeps the
+// -Wformat checking that fprintf gave us for free at every call site.
+void satori_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 #endif // SATORI_H

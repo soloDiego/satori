@@ -19,7 +19,7 @@ Mod = super (`RIVER_SEAT_V1_MODIFIERS_MOD4`), Alt = `MOD1`.
 | Mod+K | `focus-prev` | — | previous window in list order, wraps |
 | Mod+Shift+Space | `float` | — | floating window keeps its own size and position, or back to maximized |
 | Mod+Shift+R | `reload` | — | re-reads the config file; keeps the running bindings if it does not parse |
-| Mod+Shift+P | `passthrough` | — | suspends passthrough for the focused window, or restores it. **Never disabled** |
+| Mod+Shift+P | `passthrough` | — | suspends passthrough for the focused window's `app_id`, or restores it. **Never disabled** |
 | Mod+Shift+E | `exit` | — | ends the session, no confirmation; every client is disconnected. **Never disabled** |
 | Mod+Alt+A … Mod+Alt+Z | `focus-app` | the letter, in `arg.u` | focuses a window whose `app_id` starts with that letter |
 

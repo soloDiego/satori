@@ -92,15 +92,21 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   broken config, **and the previously loaded binding still firing**. The second
   half is the assertion that matters: satori owns 100% of input, so a reload that
   cleared the table and then failed would be a session with no way out
+- a binding whose command writes a marker to **both** stdout and stderr, and that
+  marker **not** appearing in the log. `spawn` detaches the child's stdio;
+  without it every app ever launched writes into the session log, because
+  satori's stderr *is* the log and fds survive `exec`. The press is asserted
+  separately -- a negative check proves nothing if the command never ran
 - `window: app_id ptest` -- the `app_id` is logged as it arrives. Load-bearing
   rather than cosmetic: it is the only way to find out what to write in a
   `passthrough` line, since an `app_id` is neither the window title nor the
   command name
 - the passthrough chain, against a `foot --app-id=ptest` and a config listing
-  `ptest`: `passthrough: on` when it takes focus, then super+shift+t (bound by
+  `ptest`: `keyboard: ptest` when it takes focus, then super+shift+t (bound by
   the reload above) **not** firing, then super+shift+p firing anyway and logging
-  `action: passthrough suspended`, then super+shift+t firing again, then a second
-  super+shift+p restoring it, then `passthrough: off` when the window closes.
+  `action: keyboard -> satori (passthrough suspended for ptest)`, then
+  super+shift+t firing again, then a second super+shift+p restoring it, then
+  `keyboard: satori` when the window closes.
   The negative assertion in the middle is the feature: passthrough is
   implemented by *disabling* the bindings, so a chord that stops reaching satori
   is the only thing observable from outside. The escape half is the one that

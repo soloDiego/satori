@@ -56,7 +56,7 @@ static void win_closed(void *data, struct river_window_v1 *handle) {
     free(win->app_id);
     free(win->title);
     free(win);
-    fprintf(stderr, "window: closed\n");
+    satori_log("window: closed\n");
 }
 static void win_dimensions(void *data, struct river_window_v1 *handle, int32_t width, int32_t height) {
     (void) handle;
@@ -64,7 +64,7 @@ static void win_dimensions(void *data, struct river_window_v1 *handle, int32_t w
     struct window *win = data;
     win->width = width;
     win->height = height;
-    fprintf(stderr, "window: %dx%d\n", width, height);
+    satori_log("window: %dx%d\n", width, height);
 }
 static void win_app_id(void *data, struct river_window_v1 *handle, const char *app_id) {
     (void) handle;
@@ -77,7 +77,7 @@ static void win_app_id(void *data, struct river_window_v1 *handle, const char *a
     // Logged because it is the only way to find out what to write in a
     // `passthrough` line. An app_id is not the window title and not the command
     // name, and nothing else in the session will tell you it.
-    fprintf(stderr, "window: app_id %s\n", win->app_id ? win->app_id : "(none)");
+    satori_log("window: app_id %s\n", win->app_id ? win->app_id : "(none)");
 }
 static void win_title(void *data, struct river_window_v1 *handle, const char *title) {
     (void) handle;
@@ -179,7 +179,7 @@ static const struct river_window_v1_listener window_listener = {
 void window_create(struct satori *satori, struct river_window_v1 *handle) {
     struct window *win = calloc(1, sizeof *win);
     if (!win) {
-        fprintf(stderr, "window_create: calloc failed\n");
+        satori_log("window_create: calloc failed\n");
         return;
     }
     win->handle = handle;
@@ -193,7 +193,7 @@ void window_create(struct satori *satori, struct river_window_v1 *handle) {
 
     river_window_v1_add_listener(handle, &window_listener, win);
     window_focus(satori, win);      // new windows open focused
-    fprintf(stderr, "wm: window\n");
+    satori_log("wm: window\n");
 }
 
 void window_focus(struct satori *satori, struct window *win) {
@@ -332,7 +332,7 @@ void windows_apply_fullscreen(struct satori *satori) {
             struct output *out = satori->outputs;
             if (win->node && out) window_place(win, out);
         }
-        fprintf(stderr, "window: fullscreen %s\n", win->fullscreen ? "on" : "off");
+        satori_log("window: fullscreen %s\n", win->fullscreen ? "on" : "off");
     }
 }
 
@@ -369,7 +369,7 @@ void windows_propose(struct satori *satori) {
         // A proposal is otherwise invisible: on a screen-sized window the
         // dimensions event that answers it looks the same as the fullscreen
         // one, so a re-proposal cannot be told apart without this.
-        fprintf(stderr, "window: propose %dx%d %s\n",
+        satori_log("window: propose %dx%d %s\n",
                 win->floating ? win->float_width  : width,
                 win->floating ? win->float_height : height,
                 win->floating ? "floating" : "maximized");
@@ -410,7 +410,7 @@ void windows_render(struct satori *satori) {
         // needs a signal that the raise happened at all.
         if (satori->raised != satori->focused) {
             satori->raised = satori->focused;
-            fprintf(stderr, "window: raised\n");
+            satori_log("window: raised\n");
         }
     }
 }

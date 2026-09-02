@@ -279,13 +279,13 @@ static char *join_params(char **params, size_t len) {
 static bool bind_directive(struct config *config, const struct scfg_directive *directive,
         const char *path) {
     if (directive->params_len < 2) {
-        fprintf(stderr, "config: %s:%d: bind needs a chord and an action\n", path, directive->lineno);
+        satori_log("config: %s:%d: bind needs a chord and an action\n", path, directive->lineno);
         return false;
     }
 
     uint32_t keysym, modifiers;
     if (!chord_parse(directive->params[0], &keysym, &modifiers)) {
-        fprintf(stderr, "config: %s:%d: bad chord '%s'\n", path, directive->lineno,
+        satori_log("config: %s:%d: bad chord '%s'\n", path, directive->lineno,
                 directive->params[0]);
         return false;
     }
@@ -294,7 +294,7 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
 
     if (strcmp(name, "none") == 0) {
         if (directive->params_len != 2) {
-            fprintf(stderr, "config: %s:%d: none takes no arguments\n", path, directive->lineno);
+            satori_log("config: %s:%d: none takes no arguments\n", path, directive->lineno);
             return false;
         }
         config_unset(config, keysym, modifiers);
@@ -303,7 +303,7 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
 
     const struct action_spec *spec = action_from_name(name);
     if (!spec) {
-        fprintf(stderr, "config: %s:%d: unknown action '%s'\n", path, directive->lineno, name);
+        satori_log("config: %s:%d: unknown action '%s'\n", path, directive->lineno, name);
         return false;
     }
 
@@ -313,14 +313,14 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
     switch (spec->arg_kind) {
     case SATORI_ARG_NONE:
         if (directive->params_len != 2) {
-            fprintf(stderr, "config: %s:%d: %s takes no arguments\n", path,
+            satori_log("config: %s:%d: %s takes no arguments\n", path,
                     directive->lineno, name);
             return false;
         }
         break;
     case SATORI_ARG_CMD:
         if (directive->params_len < 3) {
-            fprintf(stderr, "config: %s:%d: %s needs a command\n", path, directive->lineno, name);
+            satori_log("config: %s:%d: %s needs a command\n", path, directive->lineno, name);
             return false;
         }
         joined = join_params(directive->params + 2, directive->params_len - 2);
@@ -329,7 +329,7 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
         break;
     case SATORI_ARG_LETTER:
         if (directive->params_len != 3 || strlen(directive->params[2]) != 1) {
-            fprintf(stderr, "config: %s:%d: %s needs a single letter\n", path,
+            satori_log("config: %s:%d: %s needs a single letter\n", path,
                     directive->lineno, name);
             return false;
         }
@@ -340,7 +340,7 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
     bool ok = config_set(config, keysym, modifiers, spec, arg);
     free(joined);       // config_set copied it
     if (!ok) {
-        fprintf(stderr, "config: %s:%d: could not store the binding\n", path, directive->lineno);
+        satori_log("config: %s:%d: could not store the binding\n", path, directive->lineno);
     }
     return ok;
 }
@@ -352,14 +352,14 @@ static bool bind_directive(struct config *config, const struct scfg_directive *d
 static bool passthrough_directive(struct config *config, const struct scfg_directive *directive,
         const char *path) {
     if (directive->params_len < 1) {
-        fprintf(stderr, "config: %s:%d: passthrough needs at least one app_id\n",
+        satori_log("config: %s:%d: passthrough needs at least one app_id\n",
                 path, directive->lineno);
         return false;
     }
 
     for (size_t i = 0; i < directive->params_len; i++) {
         if (!config_add_passthrough(config, directive->params[i])) {
-            fprintf(stderr, "config: %s:%d: bad app_id '%s'\n", path, directive->lineno,
+            satori_log("config: %s:%d: bad app_id '%s'\n", path, directive->lineno,
                     directive->params[i]);
             return false;
         }
@@ -372,7 +372,7 @@ static bool passthrough_directive(struct config *config, const struct scfg_direc
 static bool app_keys_directive(const struct scfg_directive *directive, const char *path,
         uint32_t *modifiers, bool *enabled) {
     if (directive->params_len != 1) {
-        fprintf(stderr, "config: %s:%d: app-keys takes one argument\n", path, directive->lineno);
+        satori_log("config: %s:%d: app-keys takes one argument\n", path, directive->lineno);
         return false;
     }
     if (strcasecmp(directive->params[0], "none") == 0) {
@@ -380,7 +380,7 @@ static bool app_keys_directive(const struct scfg_directive *directive, const cha
         return true;
     }
     if (!modifiers_parse(directive->params[0], modifiers)) {
-        fprintf(stderr, "config: %s:%d: bad modifiers '%s'\n", path, directive->lineno,
+        satori_log("config: %s:%d: bad modifiers '%s'\n", path, directive->lineno,
                 directive->params[0]);
         return false;
     }
@@ -408,7 +408,7 @@ struct config *config_load(const char *path, bool with_defaults) {
     bool have_file = path && access(path, R_OK) == 0;
 
     if (have_file && scfg_load_file(&block, path) != 0) {
-        fprintf(stderr, "config: %s: could not parse\n", path);
+        satori_log("config: %s: could not parse\n", path);
         config_destroy(config);
         return NULL;
     }
@@ -436,7 +436,7 @@ struct config *config_load(const char *path, bool with_defaults) {
         } else if (strcmp(directive->name, "passthrough") == 0) {
             if (!passthrough_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "app-keys") != 0) {
-            fprintf(stderr, "config: %s:%d: unknown directive '%s'\n", path,
+            satori_log("config: %s:%d: unknown directive '%s'\n", path,
                     directive->lineno, directive->name);
             ok = false;
         }

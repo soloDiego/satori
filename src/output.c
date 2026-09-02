@@ -11,7 +11,7 @@ static void output_dimensions(void *data, struct river_output_v1 *handle, int32_
     struct output *out = data;
     out->width = width;
     out->height = height;
-    fprintf(stderr, "output: %dx%d\n", width, height);
+    satori_log("output: %dx%d\n", width, height);
 }
 static void output_position(void *data, struct river_output_v1 *handle, int32_t x, int32_t y) {
     (void) handle;
@@ -19,7 +19,7 @@ static void output_position(void *data, struct river_output_v1 *handle, int32_t 
     struct output *out = data;
     out->x = x;
     out->y = y;
-    fprintf(stderr, "output: x:%d,y:%d\n", x, y);
+    satori_log("output: x:%d,y:%d\n", x, y);
 }
 static void output_wl_output(void *data, struct river_output_v1 *handle, uint32_t name) {
     (void)data; (void)handle; (void)name;
@@ -48,7 +48,7 @@ static void output_removed(void *data, struct river_output_v1 *handle) {
     // The default is undefined once the output holding it is gone, and we
     // cannot tell from here whether this was the one. Re-pick either way.
     satori->default_output_dirty = true;
-    fprintf(stderr, "output: removed\n");
+    satori_log("output: removed\n");
 }
 static const struct river_output_v1_listener output_listener = {
     .dimensions = output_dimensions,
@@ -60,7 +60,7 @@ static const struct river_output_v1_listener output_listener = {
 void output_create(struct satori *satori, struct river_output_v1 *handle) {
     struct output *out = calloc(1, sizeof *out);
     if (!out) {
-        fprintf(stderr, "output_create: calloc failed\n");
+        satori_log("output_create: calloc failed\n");
         return;
     }
     out->handle = handle;
@@ -71,7 +71,7 @@ void output_create(struct satori *satori, struct river_output_v1 *handle) {
 
     river_output_v1_add_listener(handle, &output_listener, out);
     layer_output_create(satori, out);
-    fprintf(stderr, "wm: output\n");
+    satori_log("wm: output\n");
 }
 
 // Where a maximized window goes: the output minus whatever layer surfaces have

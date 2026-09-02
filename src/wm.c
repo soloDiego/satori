@@ -15,14 +15,14 @@ static void wm_unavailable(void *data, struct river_window_manager_v1 *handle) {
 
     struct satori *satori = data;
     satori->got_unavailable = true;     // another WM holds the slot; do not send stop
-    fprintf(stderr, "wm: unavailable\n");
+    satori_log("wm: unavailable\n");
 }
 static void wm_finished(void *data, struct river_window_manager_v1 *handle) {
     (void) handle;
 
     struct satori *satori = data;
     satori->finished_received = true;
-    fprintf(stderr, "wm: finished\n");
+    satori_log("wm: finished\n");
 }
 static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) {
     struct satori *satori = data;
@@ -51,11 +51,11 @@ static void wm_render_start(void *data, struct river_window_manager_v1 *handle) 
 }
 static void wm_session_locked(void *data, struct river_window_manager_v1 *handle) {
     (void)data; (void)handle;
-    fprintf(stderr, "wm: session locked\n");
+    satori_log("wm: session locked\n");
 }
 static void wm_session_unlocked(void *data, struct river_window_manager_v1 *handle) {
     (void)data; (void)handle;
-    fprintf(stderr, "wm: session unlocked\n");
+    satori_log("wm: session unlocked\n");
 }
 static void wm_window(void *data, struct river_window_manager_v1 *handle, struct river_window_v1 *id) {
     (void) handle;

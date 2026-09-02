@@ -4,10 +4,12 @@
 // it, so an action may not touch window management state. Actions record intent
 // (satori->focused, win->close_pending); the manage sequence applies it.
 
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -19,7 +21,7 @@
 static void spawn(const char *cmd) {
     pid_t pid = fork();
     if (pid < 0) {
-        fprintf(stderr, "spawn: fork failed\n");
+        satori_log("spawn: fork failed\n");
         return;
     }
     if (pid == 0) {
@@ -32,6 +34,19 @@ static void spawn(const char *cmd) {
             sigset_t mask;
             sigemptyset(&mask);
             sigprocmask(SIG_SETMASK, &mask, NULL);
+
+            // Detach the child's stdio. satori's stderr is the session log, and
+            // fds survive exec -- so without this every app ever launched writes
+            // its own chatter into it. One Qt app is enough to bury a session's
+            // worth of window management under thousands of lines and make the
+            // log useless exactly when it is needed.
+            int devnull = open("/dev/null", O_RDWR);
+            if (devnull >= 0) {
+                dup2(devnull, STDIN_FILENO);
+                dup2(devnull, STDOUT_FILENO);
+                dup2(devnull, STDERR_FILENO);
+                if (devnull > STDERR_FILENO) close(devnull);
+            }
 
             execl("/bin/sh", "/bin/sh", "-c", cmd, (char *) NULL);
             _exit(127);
@@ -52,11 +67,11 @@ static void action_exit_session(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
     if (satori->wm_version < 4) {
-        fprintf(stderr, "exit_session needs river_window_manager_v1 v4, have v%u\n",
+        satori_log("exit_session needs river_window_manager_v1 v4, have v%u\n",
                 satori->wm_version);
         return;
     }
-    fprintf(stderr, "action: exit session\n");
+    satori_log("action: exit session\n");
     river_window_manager_v1_exit_session(satori->wm);
 }
 static void action_close_focused(struct satori *satori, union satori_arg arg) {
@@ -101,11 +116,11 @@ static void action_focus_app(struct satori *satori, union satori_arg arg) {
 
     struct window *win = window_find_by_app(satori, letter);
     if (!win) {
-        fprintf(stderr, "action: no window for '%c'\n", letter);
+        satori_log("action: no window for '%c'\n", letter);
         return;
     }
     window_focus(satori, win);
-    fprintf(stderr, "action: focus app '%c'\n", letter);
+    satori_log("action: focus app '%c'\n", letter);
 }
 static void action_focus_next(struct satori *satori, union satori_arg arg) {
     (void) arg;
@@ -142,30 +157,93 @@ static void action_reload_config(struct satori *satori, union satori_arg arg) {
 
     satori->reload_pending = true;
 }
+// The escape binding's suspend set: app_ids passthrough is currently held off
+// for. Hand-rolled and tiny, because it holds one entry in practice. Matched
+// case-insensitively, like config_is_passthrough -- the two are compared against
+// the same app_ids and disagreeing about case would suspend nothing.
+static bool suspend_contains(const struct satori *satori, const char *app_id) {
+    if (!app_id) return false;
+
+    for (size_t i = 0; i < satori->suspended_len; i++) {
+        if (strcasecmp(satori->suspended[i], app_id) == 0) return true;
+    }
+    return false;
+}
+
+static bool suspend_add(struct satori *satori, const char *app_id) {
+    if (suspend_contains(satori, app_id)) return true;
+
+    if (satori->suspended_len == satori->suspended_cap) {
+        size_t cap = satori->suspended_cap ? satori->suspended_cap * 2 : 4;
+        char **grown = realloc(satori->suspended, cap * sizeof *grown);
+        if (!grown) return false;
+        satori->suspended = grown;
+        satori->suspended_cap = cap;
+    }
+
+    char *copy = strdup(app_id);
+    if (!copy) return false;
+
+    satori->suspended[satori->suspended_len++] = copy;
+    return true;
+}
+
+// Order does not matter, so the hole is filled from the end rather than shifting.
+static void suspend_remove(struct satori *satori, const char *app_id) {
+    for (size_t i = 0; i < satori->suspended_len; i++) {
+        if (strcasecmp(satori->suspended[i], app_id) != 0) continue;
+
+        free(satori->suspended[i]);
+        satori->suspended[i] = satori->suspended[--satori->suspended_len];
+        return;
+    }
+}
+
+void passthrough_suspend_free(struct satori *satori) {
+    for (size_t i = 0; i < satori->suspended_len; i++) free(satori->suspended[i]);
+    free(satori->suspended);
+
+    satori->suspended = NULL;
+    satori->suspended_len = satori->suspended_cap = 0;
+}
+
 // The escape hatch out of passthrough, and the reason passthrough is safe to
 // turn on at all. This action is exempt, so it is the one chord a passthrough
 // app can never swallow.
 //
-// Suspends passthrough for the focused window only, and until it is pressed
+// Suspends passthrough for the focused window's app_id until it is pressed
 // again -- reach the WM keys inside a VM, then hand the keyboard back, without
 // editing the config. Nothing to defer and no dirty flag: bindings_apply_enabled
 // recomputes the whole enabled set in the manage sequence that follows this
-// keypress, and reads passthrough_off directly.
+// keypress, and reads the suspend set directly.
+//
+// A window with no app_id can never be in passthrough (config_is_passthrough
+// says so), so there is nothing to suspend and the press is a no-op.
 static void action_toggle_passthrough(struct satori *satori, union satori_arg arg) {
     (void) arg;
 
     struct window *win = satori->focused;
-    if (!win) return;
+    if (!win || !win->app_id) return;
 
-    win->passthrough_off = !win->passthrough_off;
-    // The window is named because the toggle applies to whatever has focus, not
-    // to the passthrough app you were looking at. Press it while a terminal is
-    // focused and it flips a flag on the terminal -- harmless, but it logs the
-    // same two words, and reading them as "moonlight is back" is a wrong turn
-    // that costs an hour.
-    fprintf(stderr, "action: passthrough %s for %s\n",
-            win->passthrough_off ? "suspended" : "resumed",
-            win->app_id ? win->app_id : "(no app_id)");
+    if (suspend_contains(satori, win->app_id)) {
+        suspend_remove(satori, win->app_id);
+        satori_log("action: keyboard -> %s (passthrough resumed)\n", win->app_id);
+        return;
+    }
+
+    if (!suspend_add(satori, win->app_id)) {
+        satori_log("action: out of memory, cannot suspend passthrough for %s\n",
+                win->app_id);
+        return;
+    }
+    // Named by who ends up with the keys, and the app is named because the
+    // toggle applies to whatever has FOCUS, not to the passthrough app you think
+    // you are looking at. Press it while a terminal is focused -- easy to do,
+    // since a maximized app covers the window that actually has focus -- and it
+    // suspends the terminal. Harmless, but reading it as "moonlight is back" is
+    // a wrong turn that costs an hour.
+    satori_log("action: keyboard -> satori (passthrough suspended for %s)\n",
+            win->app_id);
 }
 
 // The names a config file uses to reach an action. This table is the only
@@ -284,7 +362,7 @@ bool config_apply_defaults(struct config *config) {
     for (size_t i = 0; i < sizeof defaults / sizeof defaults[0]; i++) {
         const struct action_spec *spec = action_from_name(defaults[i].action);
         if (!spec) {
-            fprintf(stderr, "config: built-in binding names unknown action '%s'\n",
+            satori_log("config: built-in binding names unknown action '%s'\n",
                     defaults[i].action);
             return false;
         }
@@ -300,7 +378,7 @@ static void binding_pressed(void *data, struct river_xkb_binding_v1 *handle) {
     (void) handle;
 
     struct binding *bind = data;
-    fprintf(stderr, "binding: pressed keysym 0x%x mods 0x%x\n",
+    satori_log("binding: pressed keysym 0x%x mods 0x%x\n",
             bind->keybind->keysym, bind->keybind->modifiers);
     bind->keybind->action(bind->satori, bind->keybind->arg);
 }
@@ -319,7 +397,7 @@ static const struct river_xkb_binding_v1_listener binding_listener = {
 static void binding_create(struct satori *satori, struct seat *seat, const struct keybind *keybind) {
     struct binding *bind = calloc(1, sizeof *bind);
     if (!bind) {
-        fprintf(stderr, "binding_create: calloc failed\n");
+        satori_log("binding_create: calloc failed\n");
         return;
     }
     bind->satori  = satori;
@@ -346,7 +424,7 @@ static void seat_bindings_create(struct satori *satori, struct seat *seat) {
 void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     struct seat *seat = calloc(1, sizeof *seat);
     if (!seat) {
-        fprintf(stderr, "seat_create: calloc failed\n");
+        satori_log("seat_create: calloc failed\n");
         return;
     }
     seat->handle = handle;
@@ -361,9 +439,9 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     if (satori->xkb) {
         seat_bindings_create(satori, seat);
     } else {
-        fprintf(stderr, "seat: no river_xkb_bindings_v1, key bindings disabled\n");
+        satori_log("seat: no river_xkb_bindings_v1, key bindings disabled\n");
     }
-    fprintf(stderr, "wm: seat\n");
+    satori_log("wm: seat\n");
 }
 
 void bindings_create_all(struct satori *satori) {
@@ -388,7 +466,7 @@ void config_reload(struct satori *satori) {
 
     struct config *fresh = config_load(satori->config_path, true);
     if (!fresh) {
-        fprintf(stderr, "config: reload failed, keeping the running bindings\n");
+        satori_log("config: reload failed, keeping the running bindings\n");
         return;
     }
 
@@ -397,7 +475,7 @@ void config_reload(struct satori *satori) {
     satori->config = fresh;
     bindings_create_all(satori);
 
-    fprintf(stderr, "config: reloaded %zu bindings\n", fresh->len);
+    satori_log("config: reloaded %zu bindings\n", fresh->len);
 }
 
 void seats_apply_focus(struct satori *satori) {
@@ -426,10 +504,10 @@ void seats_apply_focus(struct satori *satori) {
     // from the log. Same gap, and same fix, as `window: app_id`.
     if (applied) {
         if (satori->focused) {
-            fprintf(stderr, "seat: focus window (%s)\n",
+            satori_log("seat: focus window (%s)\n",
                     satori->focused->app_id ? satori->focused->app_id : "none");
         } else {
-            fprintf(stderr, "seat: focus cleared\n");
+            satori_log("seat: focus cleared\n");
         }
     }
 }
@@ -448,7 +526,7 @@ void seats_apply_focus(struct satori *satori) {
 // exemption is structural, so no ordering bug can shadow it. See action_specs.
 bool satori_passthrough_active(const struct satori *satori) {
     const struct window *win = satori->focused;
-    if (!win || win->passthrough_off) return false;
+    if (!win || suspend_contains(satori, win->app_id)) return false;
 
     return config_is_passthrough(satori->config, win->app_id);
 }
@@ -483,7 +561,13 @@ void bindings_apply_enabled(struct satori *satori) {
 
     if (passthrough != satori->passthrough) {
         satori->passthrough = passthrough;
-        fprintf(stderr, "passthrough: %s\n", passthrough ? "on" : "off");
+        // Reported as who ends up with the keyboard, not as a flag. "passthrough
+        // on" reads as satori doing MORE when it means satori stepping back, and
+        // that inversion is genuinely hard to hold onto while debugging -- it
+        // sent a whole session chasing satori for a bug in the client.
+        satori_log("keyboard: %s\n",
+                passthrough && satori->focused && satori->focused->app_id
+                    ? satori->focused->app_id : "satori");
     }
 }
 

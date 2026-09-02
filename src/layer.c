@@ -33,7 +33,7 @@ static void layer_output_non_exclusive_area(void *data, struct river_layer_shell
     // Maximized windows are sized to this area, so they all need re-proposing.
     // The event is followed by a manage_start, so no manage_dirty is needed.
     windows_invalidate_layout(out->satori);
-    fprintf(stderr, "layer: area %dx%d at %d,%d\n", width, height, x, y);
+    satori_log("layer: area %dx%d at %d,%d\n", width, height, x, y);
 }
 static const struct river_layer_shell_output_v1_listener layer_output_listener = {
     .non_exclusive_area = layer_output_non_exclusive_area,
@@ -45,14 +45,14 @@ static void layer_seat_focus_exclusive(void *data, struct river_layer_shell_seat
 
     struct seat *seat = data;
     seat->layer_focus = true;
-    fprintf(stderr, "layer: focus exclusive\n");
+    satori_log("layer: focus exclusive\n");
 }
 static void layer_seat_focus_non_exclusive(void *data, struct river_layer_shell_seat_v1 *handle) {
     (void) handle;
 
     struct seat *seat = data;
     seat->layer_focus = true;
-    fprintf(stderr, "layer: focus non-exclusive\n");
+    satori_log("layer: focus non-exclusive\n");
 }
 static void layer_seat_focus_none(void *data, struct river_layer_shell_seat_v1 *handle) {
     (void) handle;
@@ -60,7 +60,7 @@ static void layer_seat_focus_none(void *data, struct river_layer_shell_seat_v1 *
     struct seat *seat = data;
     seat->layer_focus = false;
     seat->satori->focus_dirty = true;   // the layer surface let go; take focus back
-    fprintf(stderr, "layer: focus none\n");
+    satori_log("layer: focus none\n");
 }
 static const struct river_layer_shell_seat_v1_listener layer_seat_listener = {
     .focus_exclusive     = layer_seat_focus_exclusive,
@@ -108,5 +108,5 @@ void layer_apply_default_output(struct satori *satori) {
 
     river_layer_shell_output_v1_set_default(out->layer);
     satori->default_output_dirty = false;
-    fprintf(stderr, "layer: default output\n");
+    satori_log("layer: default output\n");
 }

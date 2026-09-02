@@ -192,8 +192,11 @@ those chords, and they reach the client like any other key. That is the whole
 mechanism.
 
 `enable` and `disable` are window management state, so this runs in the manage
-sequence. `action_toggle_passthrough` records nothing but a per-window flag; the
-sequence that follows the keypress applies it, same as every other action.
+sequence. `action_toggle_passthrough` records nothing but an `app_id` in
+`satori->suspended`; the sequence that follows the keypress applies it, same as
+every other action. The suspend set is keyed on `app_id` rather than on
+`struct window` because a window is not durable — an app may destroy and recreate
+it at any time, taking a per-window flag with it.
 
 **Recomputed every manage sequence, with no dirty flag.** The inputs are focus,
 the focused window's `app_id`, the escape toggle and the config — and `app_id`

@@ -28,6 +28,25 @@ starts with no window manager — windows never become visible.
 Log to a file. Satori writes every event to stderr and there is no terminal to
 read it from on a TTY.
 
+## Reading the log
+
+Every line is stamped `HH:MM:SS.mmm` and flushed immediately, so a hang shows
+what came last instead of an empty file. Milliseconds because a whole manage
+sequence is sub-millisecond.
+
+Lines worth knowing:
+
+| | |
+| --- | --- |
+| `window: app_id <id>` | what to write in a `passthrough` or `focus-app` line |
+| `keyboard: <app_id>` | passthrough is active — that app has the keys, Satori's bindings are off |
+| `keyboard: satori` | Satori has the keys — normal |
+| `binding: pressed keysym 0x.. mods 0x..` | a chord matched. Absent = it never reached Satori |
+
+Apps Satori launches get their stdio sent to `/dev/null`, so the log stays
+Satori's own. Anything you start by hand from a terminal still writes wherever
+that terminal points.
+
 ## What Satori owns
 
 River 0.4 has no built-in key bindings and ships no `riverctl`. Every binding in

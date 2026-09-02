@@ -362,6 +362,30 @@ if [ -x "$KEYPRESS" ]; then
     press super+shift+y
     check "a binding added over SIGHUP fires" 'binding: pressed keysym 0x79 mods 0x41'
 
+    # spawn() detaches the child's stdio. satori's stderr IS the session log and
+    # fds survive exec, so without the redirect every app ever launched writes
+    # into it -- one Qt app buried a real session's window management under
+    # thousands of lines, at the exact moment the log was being read to debug it.
+    # The marker goes to BOTH streams: redirecting only stderr is the easy
+    # half-fix and would pass a stderr-only check.
+    printf 'bind Mod+Shift+T spawn foot\nbind Mod+Shift+Y spawn "echo satori_spawn_marker; echo satori_spawn_marker >&2"\n' > "$CONF"
+    nested_kill HUP
+    check "reloads with a noisy command" 'config: reloaded'
+
+    # The press has to be confirmed separately: a negative assertion proves
+    # nothing if the command never ran in the first place.
+    presses_before="$(grep -cE 'binding: pressed keysym 0x79 mods 0x41' "$LOG")"
+    press super+shift+y
+    check_count "the noisy command runs" \
+        'binding: pressed keysym 0x79 mods 0x41' "$((presses_before + 1))"
+    sleep 0.5
+    if grep -q 'satori_spawn_marker' "$LOG"; then
+        echo "  FAIL  a spawned command's output leaked into the log"
+        FAILED=1
+    else
+        echo "  ok    a spawned command's output stays out of the log"
+    fi
+
     # The safety rule, and the one worth the most: satori owns 100% of input, so
     # a reload that cleared the table and then failed to rebuild it would be a
     # session with no terminal, no launcher, and no way to fix the file that
@@ -396,7 +420,7 @@ if [ -x "$KEYPRESS" ]; then
     # It opens focused, so passthrough turns on by itself. app_id arrives on its
     # own event after the window one; recomputing every manage sequence rather
     # than on a focus-time flag is what makes that ordering not matter.
-    check "passthrough turns on for a listed app_id" 'passthrough: on'
+    check "passthrough turns on for a listed app_id" 'keyboard: ptest'
 
     # The whole point: a normal binding must stop reaching satori.
     presses_before="$(grep -cE 'binding: pressed keysym 0x74 mods 0x41' "$LOG")"
@@ -415,8 +439,9 @@ if [ -x "$KEYPRESS" ]; then
     press super+shift+p
     check "the escape binding still fires during passthrough" \
         'binding: pressed keysym 0x70 mods 0x41'
-    check "the escape binding suspends passthrough" 'action: passthrough suspended'
-    check "passthrough turns off for that window"   'passthrough: off'
+    check "the escape binding suspends passthrough" \
+        'action: keyboard -> satori \(passthrough suspended for ptest\)'
+    check "the keyboard comes back to satori"       'keyboard: satori'
 
     press super+shift+t
     check_count "the bindings come back after the escape" \
@@ -428,15 +453,16 @@ if [ -x "$KEYPRESS" ]; then
     press super+alt+p
     check "reaches the passthrough window again" "action: focus app 'p'"
 
-    on_before="$(grep -cE 'passthrough: on' "$LOG")"
+    on_before="$(grep -cE 'keyboard: ptest' "$LOG")"
     press super+shift+p
-    check "the escape binding resumes passthrough" 'action: passthrough resumed'
-    check_count "passthrough turns back on" 'passthrough: on' "$((on_before + 1))"
+    check "the escape binding resumes passthrough" \
+        'action: keyboard -> ptest \(passthrough resumed\)'
+    check_count "passthrough turns back on" 'keyboard: ptest' "$((on_before + 1))"
 
     # Focus leaving the app is enough on its own; nothing has to be toggled.
     kill "$PT_PID" 2>/dev/null
     PT_PID=""
-    check_count "passthrough ends when the window closes" 'passthrough: off' 2
+    check_count "passthrough ends when the window closes" 'keyboard: satori' 2
 else
     echo "  ..    skipping key bindings (no $KEYPRESS; run make)"
 fi

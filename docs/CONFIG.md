@@ -135,12 +135,18 @@ ones, and those keys reach the client instead.
 | No `app_id` yet | matches nothing |
 | Nothing focused | passthrough off |
 | Exempt | `passthrough` and `exit`, whatever chords they are bound to |
-| Escape | `Mod+Shift+P` by default — suspends passthrough for that one window |
-| Logs | `passthrough: on` / `passthrough: off` on change |
+| Escape | `Mod+Shift+P` by default — suspends passthrough for the focused window's `app_id` |
+| Logs | `keyboard: <app_id>` / `keyboard: satori` on change |
 
-The escape is per window and lasts the window's lifetime: suspend it, use the WM
-keys, press it again to hand the keyboard back. It does not turn the feature off
-globally, and another window of the same app is unaffected.
+The escape is keyed on `app_id`, not on the window: suspend it, use the WM keys,
+press it again to hand the keyboard back. It covers every window of that app,
+including ones opened later, and survives a config reload. Other apps in the
+`passthrough` list are unaffected.
+
+Keying it on the window instead is a trap. An app is free to destroy and recreate
+its window — Moonlight does exactly that when a stream starts — and a flag living
+on the window goes with it, silently re-arming passthrough mid-stream with no
+keypress in the log to explain it.
 
 **The exemption belongs to the action, not the chord.** Re-binding `passthrough`
 to another key carries it:
