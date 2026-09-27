@@ -187,6 +187,7 @@ include theme
 - `gap` + `border` width come off every side of the usable area
   (`window_maximized_box`, `src/window.c`). Floating windows keep their geometry.
 - Borders sit outside the content; hidden while fullscreen (river).
+- Every window is asked for server-side decorations (`use_ssd`), so clients drop their own title bars. CSD-only clients keep theirs.
 - No rounded corners: river has no request for them.
 - `cursor`: sent to every seat (`set_xcursor_theme`, seat v2+) and exported as
   `XCURSOR_THEME`/`XCURSOR_SIZE` for programs spawned after. Clients that load

@@ -167,6 +167,19 @@ check "sees the new window"            'wm: window'
 check "window gets dimensions"         'window: [0-9]+x[0-9]+'   # proof propose_dimensions landed
 check "focuses the new window"         'seat: focus window'
 
+# The bar feed. A new client gets the current state at once, so one line is
+# enough: the foot above, listed and focused. The second instance earlier must
+# not have taken the socket over.
+check "listens on the status socket"   "status: .*satori-$NESTED.sock"
+check "status sees the app_id"         'window: app_id foot'
+status_line="$(WAYLAND_DISPLAY="$NESTED" timeout 2 "$BIN" status 2>/dev/null | head -1)"
+if [[ "$status_line" == '{"focused":0,"windows":[{"app_id":"foot",'* ]]; then
+    echo "  ok    status lists the focused window"
+else
+    echo "  FAIL  status lists the focused window (got: $status_line)"
+    FAILED=1
+fi
+
 # Key bindings, end to end: a real key event through the compositor into an
 # action. Everything above this proves bindings exist, not that they fire.
 if [ -x "$KEYPRESS" ]; then

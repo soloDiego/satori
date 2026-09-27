@@ -49,7 +49,13 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = registry_global_remove,
 };
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "status") == 0) return status_client();
+    if (argc != 1) {
+        fprintf(stderr, "usage: satori [status]\n");
+        return 2;
+    }
+
     struct wl_display *display = wl_display_connect(NULL);
     if (!display) {
         satori_log("could not connect to wayland display "
@@ -58,6 +64,7 @@ int main(void) {
     }
 
     struct satori satori = {0};
+    satori.status_fd = -1;      // status_destroy is safe before status_init
 
     // Before the first roundtrip: seat_create builds its bindings straight out
     // of the table, and the seat event can arrive in the very first dispatch.
@@ -102,6 +109,7 @@ int main(void) {
         return 1;
     }
 
+    status_init(&satori);
     int wl_fd = wl_display_get_fd(display);
     bool should_exit = false;
 
@@ -121,13 +129,18 @@ int main(void) {
             break;
         }
 
+        // Once per wakeup, however many events changed the list: a title
+        // that updates on every keystroke must not cost a line per event.
+        status_flush(&satori);
         wl_display_flush(display);
 
-        struct pollfd pfds[2] = {
-            { .fd = wl_fd,  .events = POLLIN },
-            { .fd = sigfd,  .events = POLLIN },
+        // fd -1 when there is no socket: poll ignores negative fds.
+        struct pollfd pfds[3] = {
+            { .fd = wl_fd,              .events = POLLIN },
+            { .fd = sigfd,              .events = POLLIN },
+            { .fd = satori.status_fd,   .events = POLLIN },
         };
-        int ret = poll(pfds, 2, -1);
+        int ret = poll(pfds, 3, -1);
 
         if (ret < 0) {
             wl_display_cancel_read(display);
@@ -142,6 +155,8 @@ int main(void) {
         } else {
             wl_display_cancel_read(display);
         }
+
+        if (pfds[2].revents & POLLIN) status_accept(&satori);
 
         if (pfds[1].revents & POLLIN) {
             struct signalfd_siginfo si;
@@ -162,6 +177,7 @@ int main(void) {
     wl_display_roundtrip(display);
     if (!satori.wm) {
         satori_log("could not bind to global river_window_manager_v1\n");
+        status_destroy(&satori);
         config_destroy(satori.config);
         free(satori.config_path);
         wl_registry_destroy(registry);
@@ -185,6 +201,7 @@ int main(void) {
     outputs_destroy_all(&satori);
     config_destroy(satori.config);
     passthrough_suspend_free(&satori);
+    status_destroy(&satori);
     free(satori.config_path);
 
     // After the per-output and per-seat layer objects, which the walks above destroy.

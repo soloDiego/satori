@@ -19,6 +19,10 @@
 #define SATORI_APP_KEYS_MODIFIERS \
     (RIVER_SEAT_V1_MODIFIERS_MOD4 | RIVER_SEAT_V1_MODIFIERS_MOD1)
 
+// Status socket readers at once. A bar is one; the rest is room for a script
+// or two watching alongside it.
+#define SATORI_STATUS_CLIENTS 8
+
 struct output;
 struct window;
 struct seat;
@@ -76,6 +80,13 @@ struct satori {
     // The config's cursor theme has not reached the seats yet: set at startup,
     // on a new seat, and on reload.
     bool            cursor_dirty;
+
+    // Status socket for bars; see status.c. -1 = not listening / free slot.
+    // Anything that changes the window list, a title or focus sets
+    // status_dirty; the main loop flushes once per wakeup.
+    int             status_fd;
+    int             status_clients[SATORI_STATUS_CLIENTS];
+    bool            status_dirty;
 };
 
 struct output {
@@ -104,6 +115,7 @@ struct window {
     int32_t width, height;
     bool proposed;          // dimensions proposed; the server owes us a dimensions event
     bool close_pending;     // close requested; sent in the next manage sequence
+    bool ssd;               // use_ssd sent: satori decorates, the client does not
 
     // Floating windows keep their own geometry instead of filling the usable
     // area. proposed is the dirty bit for the switch: clear it and the next
@@ -279,6 +291,14 @@ void bindings_destroy_all(struct satori *satori);
 bool satori_passthrough_active(const struct satori *satori);
 bool binding_stays_enabled(const struct keybind *keybind, bool passthrough);
 void passthrough_suspend_free(struct satori *satori);   // shutdown
+
+// status.c -- the window list feed for bars. Not protocol state, so none of
+// this is sequence-scoped.
+void status_init(struct satori *satori);
+void status_accept(struct satori *satori);
+void status_flush(struct satori *satori);
+void status_destroy(struct satori *satori);
+int status_client(void);        // `satori status`
 
 // log.c -- timestamped, flushed diagnostics. The format attribute keeps the
 // -Wformat checking that fprintf gave us for free at every call site.

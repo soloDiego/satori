@@ -56,6 +56,7 @@ static void win_closed(void *data, struct river_window_v1 *handle) {
     free(win->app_id);
     free(win->title);
     free(win);
+    satori->status_dirty = true;
     satori_log("window: closed\n");
 }
 static void win_dimensions(void *data, struct river_window_v1 *handle, int32_t width, int32_t height) {
@@ -73,6 +74,7 @@ static void win_app_id(void *data, struct river_window_v1 *handle, const char *a
     struct window *win = data;
     free(win->app_id);
     win->app_id = app_id ? strdup(app_id) : NULL;
+    win->satori->status_dirty = true;
 
     // Logged because it is the only way to find out what to write in a
     // `passthrough` line. An app_id is not the window title and not the command
@@ -85,6 +87,7 @@ static void win_title(void *data, struct river_window_v1 *handle, const char *ti
     struct window *win = data;
     free(win->title);
     win->title = title ? strdup(title) : NULL;
+    win->satori->status_dirty = true;
 }
 static void win_dimensions_hint(void *data, struct river_window_v1 *handle, int32_t min_width,
         int32_t min_height, int32_t max_width, int32_t max_height) {
@@ -200,6 +203,7 @@ void window_focus(struct satori *satori, struct window *win) {
     if (satori->focused == win) return;
     satori->focused = win;
     satori->focus_dirty = true;
+    satori->status_dirty = true;
     // Recency is maintained here rather than in the actions, so every way of
     // focusing a window feeds the lookup -- bindings, new windows, and focus
     // falling through when the focused window closes.
@@ -368,6 +372,14 @@ void windows_propose(struct satori *satori) {
     (void) x; (void) y;
 
     for (struct window *win = satori->windows; win; win = win->next) {
+        // Without this the protocol defaults to CSD, and every client draws its
+        // own title bar inside satori's border. Once per window: it is state,
+        // not a hint to repeat. A client that only does CSD ignores it.
+        if (!win->ssd) {
+            river_window_v1_use_ssd(win->handle);
+            win->ssd = true;
+        }
+
         // The server answers every proposal with a dimensions event, which
         // starts another sequence: re-proposing unconditionally never settles.
         if (win->proposed) continue;

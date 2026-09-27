@@ -74,6 +74,7 @@ on every change. Pixels are not covered — see
 - [docs/CONFIG.md](docs/CONFIG.md) — the config file
 - [docs/TESTING.md](docs/TESTING.md) — how to test a change
 - [docs/KEYBINDS.md](docs/KEYBINDS.md) — default bindings
+- [docs/STATUS.md](docs/STATUS.md) — window list feed for bars
 - [docs/SEQUENCES.md](docs/SEQUENCES.md) — the manage/render state machine
 
 ## License
