@@ -73,6 +73,9 @@ struct satori {
     // point of asking: rebuilding the table frees the very keybind the running
     // binding callback is reading from.
     bool            reload_pending;
+    // The config's cursor theme has not reached the seats yet: set at startup,
+    // on a new seat, and on reload.
+    bool            cursor_dirty;
 };
 
 struct output {
@@ -172,6 +175,12 @@ struct action_spec {
     bool                    exempt;
 };
 
+// A border color as set_borders takes it: 32 bits per channel, alpha
+// pre-multiplied into r, g and b.
+struct border_color {
+    uint32_t r, g, b, a;
+};
+
 // The live binding table, heap owned and rebuilt from scratch on every reload.
 //
 // binds grows by realloc, which MOVES it, and every struct binding borrows a
@@ -188,6 +197,14 @@ struct config {
     // any time.
     char            **passthrough;
     size_t          passthrough_len, passthrough_cap;
+
+    // Appearance. The zero value is the old look: no gap, no border, river's
+    // own cursor.
+    int32_t             gap;            // px around a maximized window
+    int32_t             border_width;   // px; 0 = no border
+    struct border_color border_focused, border_unfocused;
+    char                *cursor_theme;  // owned; NULL = leave river's default
+    uint32_t            cursor_size;
 };
 
 struct binding {
@@ -220,6 +237,8 @@ void window_create(struct satori *satori, struct river_window_v1 *handle);
 void window_focus(struct satori *satori, struct window *win);
 struct window *window_find_by_app(const struct satori *satori, char letter);
 void window_init_float_geometry(struct window *win, const struct output *out);
+void window_maximized_box(const struct satori *satori, const struct output *out,
+        int32_t *x, int32_t *y, int32_t *width, int32_t *height);
 void window_position(const struct window *win, const struct output *out,
         int32_t *x, int32_t *y);
 void windows_invalidate_layout(struct satori *satori);
@@ -242,10 +261,12 @@ bool config_add_passthrough(struct config *config, const char *app_id);     // c
 bool config_is_passthrough(const struct config *config, const char *app_id);
 bool chord_parse(const char *chord, uint32_t *keysym, uint32_t *modifiers);
 bool modifiers_parse(const char *spec, uint32_t *modifiers);
+bool color_parse(const char *spec, struct border_color *color);
 
 // input.c -- seats, key bindings, actions.
 void seat_create(struct satori *satori, struct river_seat_v1 *handle);
 void seats_apply_focus(struct satori *satori);      // manage sequence
+void seats_apply_cursor(struct satori *satori);     // manage sequence
 void seats_destroy_all(struct satori *satori);
 const struct action_spec *action_from_name(const char *name);
 bool config_apply_defaults(struct config *config);

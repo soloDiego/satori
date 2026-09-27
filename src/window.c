@@ -240,8 +240,29 @@ struct window *window_find_by_app(const struct satori *satori, char letter) {
     return focused;     // the only window of its app
 }
 
+// Where a maximized window's content goes: the usable area, inset by the gap
+// and then by the border. Borders are drawn outside the content, so without the
+// second inset they would land under the bar or off the screen edge. One
+// function for both size and position, so the two cannot disagree.
+void window_maximized_box(const struct satori *satori, const struct output *out,
+        int32_t *x, int32_t *y, int32_t *width, int32_t *height) {
+    output_usable_area(out, x, y, width, height);
+
+    const struct config *config = satori ? satori->config : NULL;
+    if (!config) return;
+
+    int32_t inset = config->gap + config->border_width;
+    // A gap bigger than the screen would propose a negative size.
+    if (inset * 2 >= *width || inset * 2 >= *height) return;
+
+    *x += inset;
+    *y += inset;
+    *width  -= inset * 2;
+    *height -= inset * 2;
+}
+
 // Where a window's node goes: its own coordinates when floating, otherwise the
-// top left of the output's usable area. Kept separate from the request below so
+// top left of its maximized box. Kept separate from the request below so
 // there is something to unit test -- a placement bug is otherwise invisible to
 // every automated test we have, since headless proves protocol, not pixels.
 void window_position(const struct window *win, const struct output *out,
@@ -253,7 +274,7 @@ void window_position(const struct window *win, const struct output *out,
     }
 
     int32_t width, height;
-    output_usable_area(out, x, y, &width, &height);
+    window_maximized_box(win->satori, out, x, y, &width, &height);
     (void) width; (void) height;    // placement needs the origin only
 }
 
@@ -343,7 +364,7 @@ void windows_propose(struct satori *satori) {
     // Maximized means the output minus whatever panels reserved, not the whole
     // output -- otherwise a bar sits on top of every window.
     int32_t x, y, width, height;
-    output_usable_area(out, &x, &y, &width, &height);
+    window_maximized_box(satori, out, &x, &y, &width, &height);
     (void) x; (void) y;
 
     for (struct window *win = satori->windows; win; win = win->next) {
@@ -384,6 +405,23 @@ void windows_apply_closes(struct satori *satori) {
     }
 }
 
+// Borders are rendering state. Re-sent every render rather than tracked: focus
+// decides the color, and the request fully replaces the last one, so a stale
+// color cannot survive the next sequence.
+static void window_borders(const struct window *win) {
+    const struct config *config = win->satori->config;
+    if (!config || config->border_width <= 0) {
+        river_window_v1_set_borders(win->handle, RIVER_WINDOW_V1_EDGES_NONE, 0, 0, 0, 0, 0);
+        return;
+    }
+    const struct border_color *c = win == win->satori->focused
+            ? &config->border_focused : &config->border_unfocused;
+    river_window_v1_set_borders(win->handle,
+            RIVER_WINDOW_V1_EDGES_TOP | RIVER_WINDOW_V1_EDGES_BOTTOM |
+            RIVER_WINDOW_V1_EDGES_LEFT | RIVER_WINDOW_V1_EDGES_RIGHT,
+            config->border_width, c->r, c->g, c->b, c->a);
+}
+
 void windows_render(struct satori *satori) {
     struct output *out = satori->outputs;
 
@@ -397,6 +435,7 @@ void windows_render(struct satori *satori) {
             river_node_v1_set_position(win->node, 0, 0);
         }
         river_node_v1_place_bottom(win->node);
+        window_borders(win);
     }
 
     // Raise the focused window. Without this, stacking follows creation order

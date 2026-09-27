@@ -1204,6 +1204,124 @@ static void test_reload_only_records_intent(void) {
     CHECK(satori.config == NULL);       // nothing was rebuilt at the keypress
 }
 
+// Channels widen to 32 bits with alpha pre-multiplied; anything that is not
+// exactly #rrggbb or #rrggbbaa is refused rather than half-read.
+static void test_color_parse(void) {
+    struct border_color c;
+    CHECK(color_parse("#7aa2f7", &c));
+    CHECK(c.r == 0x7a7a7a7a && c.g == 0xa2a2a2a2 && c.b == 0xf7f7f7f7 && c.a == 0xffffffff);
+
+    CHECK(color_parse("#ffffff80", &c));    // half alpha halves the channels
+    CHECK(c.a == 0x80808080 && c.r == 0x80808080);
+
+    CHECK(!color_parse("7aa2f7", &c));      // no #
+    CHECK(!color_parse("#7aa2f", &c));      // odd length
+    CHECK(!color_parse("#7aa2fz", &c));     // not hex
+    CHECK(!color_parse("#-1a2f7", &c));
+    CHECK(!color_parse(NULL, &c));
+}
+
+static void test_config_appearance(void) {
+    struct config *config = load_config_text(
+            "gap 8\n"
+            "border 1 #7aa2f7 #292e42\n"
+            "cursor catppuccin-mocha-dark-cursors\n");
+    CHECK(config != NULL);
+    if (config) {
+        CHECK(config->gap == 8);
+        CHECK(config->border_width == 1);
+        CHECK(config->border_focused.b == 0xf7f7f7f7);
+        CHECK(config->border_unfocused.r == 0x29292929);
+        CHECK(config->cursor_theme && strcmp(config->cursor_theme, "catppuccin-mocha-dark-cursors") == 0);
+        CHECK(config->cursor_size == 24);   // the default
+        config_destroy(config);
+    }
+
+    // The zero value is the old look.
+    config = load_config_text("");
+    CHECK(config && config->gap == 0 && config->border_width == 0 && !config->cursor_theme);
+    config_destroy(config);
+
+    CHECK(!load_config_text("gap -4\n"));
+    CHECK(!load_config_text("gap 8px\n"));
+    CHECK(!load_config_text("border 1 #7aa2f7\n"));        // one color short
+    CHECK(!load_config_text("border 1 blue #292e42\n"));
+    CHECK(!load_config_text("cursor\n"));
+    CHECK(!load_config_text("cursor Adwaita 0\n"));
+}
+
+// Writes an included file next to where load_config_text puts the main one, so
+// a bare name resolves the way `include theme` does for real.
+static char *write_include(const char *text) {
+    static char path[] = "/tmp/satori-theme-XXXXXX";
+    strcpy(path, "/tmp/satori-theme-XXXXXX");
+    int fd = mkstemp(path);
+    if (fd < 0) return NULL;
+    size_t len = strlen(text);
+    bool written = write(fd, text, len) == (ssize_t) len;
+    close(fd);
+    return written ? path : NULL;
+}
+
+static void test_config_include(void) {
+    char *theme = write_include("border 2 #ffffff #000000\ncursor Adwaita 32\n");
+    CHECK(theme != NULL);
+    if (!theme) return;
+
+    char text[256];
+    snprintf(text, sizeof text, "gap 4\ninclude %s\n", strrchr(theme, '/') + 1);
+    struct config *config = load_config_text(text);
+    CHECK(config != NULL);
+    if (config) {
+        CHECK(config->gap == 4);
+        CHECK(config->border_width == 2);
+        CHECK(config->cursor_size == 32);
+        config_destroy(config);
+    }
+    unlink(theme);
+
+    // Missing: skipped, not an error -- a fresh clone before theme-apply runs.
+    config = load_config_text("include /tmp/satori-no-such-theme\n");
+    CHECK(config != NULL);
+    config_destroy(config);
+
+    // Appearance only: a bind hiding in the theme file is refused.
+    theme = write_include("bind Mod+Return spawn foot\n");
+    snprintf(text, sizeof text, "include %s\n", theme);
+    CHECK(!load_config_text(text));
+    unlink(theme);
+}
+
+// Gap and border both come off every side of the usable area, and position and
+// size come from the same box. Floating windows keep their own geometry.
+static void test_maximized_box_insets_gap_and_border(void) {
+    struct output out = { .width = 1920, .height = 1080 };
+    out.has_area = true;
+    out.area_x = 0; out.area_y = 30;
+    out.area_width = 1920; out.area_height = 1050;
+
+    struct config config = { .gap = 8, .border_width = 1 };
+    struct satori satori = { .config = &config };
+
+    int32_t x, y, w, h;
+    window_maximized_box(&satori, &out, &x, &y, &w, &h);
+    CHECK(x == 9 && y == 39 && w == 1902 && h == 1032);
+
+    struct window win = { .satori = &satori };
+    window_position(&win, &out, &x, &y);
+    CHECK(x == 9 && y == 39);
+
+    win.floating = true;
+    win.float_x = 100; win.float_y = 200;
+    window_position(&win, &out, &x, &y);
+    CHECK(x == 100 && y == 200);
+
+    // An inset that would leave nothing is ignored rather than going negative.
+    config.gap = 600;
+    window_maximized_box(&satori, &out, &x, &y, &w, &h);
+    CHECK(x == 0 && y == 30 && w == 1920 && h == 1050);
+}
+
 int main(void) {
     printf("== satori unit tests\n");
 
@@ -1265,6 +1383,11 @@ int main(void) {
     test_passthrough_exempts_the_escape_routes();
     test_passthrough_exemption_follows_a_rebound_action();
 
+    test_color_parse();
+    test_config_appearance();
+    test_config_include();
+    test_maximized_box_insets_gap_and_border();
+
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
 
     if (failures) {
@@ -1280,6 +1403,7 @@ int main(void) {
            "  ok    chord parsing, keysym lowering\n"
            "  ok    config merge, unbind, app-keys, rejection\n"
            "  ok    binding table ownership, reload intent\n"
-           "  ok    passthrough matching, escape toggle, exempt bindings\n\nPASS\n");
+           "  ok    passthrough matching, escape toggle, exempt bindings\n"
+           "  ok    colors, gap, border, cursor, include\n\nPASS\n");
     return 0;
 }

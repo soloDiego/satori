@@ -11,6 +11,8 @@
 // rebuild them would be a session with no way out, including no way to fix the
 // config that broke it.
 
+#include <errno.h>
+#include <limits.h>
 #include <scfg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -367,6 +369,148 @@ static bool passthrough_directive(struct config *config, const struct scfg_direc
     return true;
 }
 
+// "#rrggbb" or "#rrggbbaa". Widened to the 32-bit channels set_borders takes,
+// with alpha pre-multiplied in, which is what river expects unless told
+// otherwise.
+bool color_parse(const char *spec, struct border_color *color) {
+    if (!spec || spec[0] != '#') return false;
+    size_t len = strlen(spec + 1);
+    if (len != 6 && len != 8) return false;
+
+    uint8_t ch[4] = { 0, 0, 0, 0xff };
+    for (size_t i = 0; i < len / 2; i++) {
+        char hex[3] = { spec[1 + 2 * i], spec[2 + 2 * i], '\0' };
+        char *end;
+        unsigned long v = strtoul(hex, &end, 16);
+        if (*end != '\0' || hex[0] == '+' || hex[0] == '-' || hex[0] == ' ') return false;
+        ch[i] = (uint8_t) v;
+    }
+
+    // 0xff * 0x01010101 == 0xffffffff: each 8-bit step is one 32-bit step.
+    uint32_t a = ch[3];
+    color->r = (uint32_t) (ch[0] * a / 0xff) * 0x01010101u;
+    color->g = (uint32_t) (ch[1] * a / 0xff) * 0x01010101u;
+    color->b = (uint32_t) (ch[2] * a / 0xff) * 0x01010101u;
+    color->a = a * 0x01010101u;
+    return true;
+}
+
+// A whole-string non-negative integer no bigger than max.
+static bool size_parse(const char *spec, long max, long *out) {
+    if (!spec || !*spec) return false;
+    char *end;
+    errno = 0;
+    long v = strtol(spec, &end, 10);
+    if (errno || *end != '\0' || v < 0 || v > max) return false;
+    *out = v;
+    return true;
+}
+
+static bool gap_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path) {
+    long px;
+    if (directive->params_len != 1 || !size_parse(directive->params[0], 1000, &px)) {
+        satori_log("config: %s:%d: gap takes one size in px\n", path, directive->lineno);
+        return false;
+    }
+    config->gap = (int32_t) px;
+    return true;
+}
+
+// border <width> <focused color> <unfocused color>. One line, so a theme file
+// swaps the whole look at once.
+static bool border_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path) {
+    long px;
+    if (directive->params_len != 3 || !size_parse(directive->params[0], 100, &px)
+            || !color_parse(directive->params[1], &config->border_focused)
+            || !color_parse(directive->params[2], &config->border_unfocused)) {
+        satori_log("config: %s:%d: border takes a width and two colors (#rrggbb[aa])\n",
+                path, directive->lineno);
+        return false;
+    }
+    config->border_width = (int32_t) px;
+    return true;
+}
+
+// cursor <xcursor theme> [size]. Size defaults to 24, the common XCursor size.
+static bool cursor_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path) {
+    long size = 24;
+    if (directive->params_len < 1 || directive->params_len > 2 || !*directive->params[0]
+            || (directive->params_len == 2 && !size_parse(directive->params[1], 256, &size))
+            || size == 0) {
+        satori_log("config: %s:%d: cursor takes a theme name and an optional size\n",
+                path, directive->lineno);
+        return false;
+    }
+    char *theme = strdup(directive->params[0]);
+    if (!theme) return false;
+    free(config->cursor_theme);
+    config->cursor_theme = theme;
+    config->cursor_size = (uint32_t) size;
+    return true;
+}
+
+// The directives an included file may hold. Appearance only: that is what
+// changes with the light/dark theme, and it keeps bind precedence a property
+// of one file.
+static bool appearance_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path, bool *handled) {
+    *handled = true;
+    if (strcmp(directive->name, "gap") == 0) return gap_directive(config, directive, path);
+    if (strcmp(directive->name, "border") == 0) return border_directive(config, directive, path);
+    if (strcmp(directive->name, "cursor") == 0) return cursor_directive(config, directive, path);
+    *handled = false;
+    return true;
+}
+
+// include <file>, relative to the including file's directory. A missing file
+// is skipped, like a missing config: theme-apply creates the usual target, and
+// a fresh clone before its first run should still get a session.
+static bool include_directive(struct config *config, const struct scfg_directive *directive,
+        const char *path) {
+    if (directive->params_len != 1 || !*directive->params[0]) {
+        satori_log("config: %s:%d: include takes one file\n", path, directive->lineno);
+        return false;
+    }
+
+    const char *name = directive->params[0];
+    char full[PATH_MAX];
+    if (name[0] == '/') {
+        snprintf(full, sizeof full, "%s", name);
+    } else {
+        const char *slash = strrchr(path, '/');
+        int dir = slash ? (int) (slash - path) : 1;
+        snprintf(full, sizeof full, "%.*s/%s", dir, slash ? path : ".", name);
+    }
+
+    if (access(full, R_OK) != 0) {
+        satori_log("config: %s:%d: %s not found, skipped\n", path, directive->lineno, full);
+        return true;
+    }
+
+    struct scfg_block block = {0};
+    if (scfg_load_file(&block, full) != 0) {
+        satori_log("config: %s: could not parse\n", full);
+        return false;
+    }
+
+    bool ok = true;
+    for (size_t i = 0; i < block.directives_len; i++) {
+        const struct scfg_directive *d = &block.directives[i];
+        bool handled;
+        if (!appearance_directive(config, d, full, &handled)) ok = false;
+        if (!handled) {
+            satori_log("config: %s:%d: '%s' not allowed in an included file\n",
+                    full, d->lineno, d->name);
+            ok = false;
+        }
+    }
+    scfg_block_finish(&block);
+    return ok;
+}
+
 // Resolved before the generated letter block goes in, so that an explicit bind
 // line on a letter chord lands on top of the generated one rather than under it.
 static bool app_keys_directive(const struct scfg_directive *directive, const char *path,
@@ -435,7 +579,12 @@ struct config *config_load(const char *path, bool with_defaults) {
             if (!bind_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "passthrough") == 0) {
             if (!passthrough_directive(config, directive, path)) ok = false;
+        } else if (strcmp(directive->name, "include") == 0) {
+            if (!include_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "app-keys") != 0) {
+            bool handled;
+            if (!appearance_directive(config, directive, path, &handled)) ok = false;
+            if (handled) continue;
             satori_log("config: %s:%d: unknown directive '%s'\n", path,
                     directive->lineno, directive->name);
             ok = false;
@@ -460,6 +609,7 @@ void config_destroy(struct config *config) {
     for (size_t i = 0; i < config->passthrough_len; i++) free(config->passthrough[i]);
     free(config->passthrough);
 
+    free(config->cursor_theme);
     free(config);
 }
 

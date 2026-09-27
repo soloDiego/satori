@@ -37,6 +37,10 @@ not unbind that chord. Use `none` for that.
 | `app-keys` | modifiers | modifiers for the 26 generated `focus-app` letter bindings |
 | `app-keys` | `none` | omits the generated block entirely |
 | `passthrough` | one or more `app_id`s | those windows get the keyboard to themselves |
+| `gap` | px | space around a maximized window |
+| `border` | width, focused color, unfocused color | compositor-drawn border on every window |
+| `cursor` | XCursor theme, optional size | cursor theme and size (default 24) |
+| `include` | file | reads appearance directives from another file |
 
 `app-keys` defaults to `Mod+Alt`. Repeating it is allowed; the last one wins.
 
@@ -169,6 +173,29 @@ It is not the window title and not the command name — Moonlight's binary is
 `moonlight` and its `app_id` is `com.moonlight_stream.Moonlight`. A window that
 has not sent one logs `(none)`.
 
+## Appearance
+
+```
+gap 8
+border 1 #414868 #292e42
+cursor catppuccin-mocha-dark-cursors 24
+include theme
+```
+
+- Defaults: no gap, no border, river's cursor. Last line wins.
+- Colors: `#rrggbb` or `#rrggbbaa` (`color_parse`, `src/config.c`).
+- `gap` + `border` width come off every side of the usable area
+  (`window_maximized_box`, `src/window.c`). Floating windows keep their geometry.
+- Borders sit outside the content; hidden while fullscreen (river).
+- No rounded corners: river has no request for them.
+- `cursor`: sent to every seat (`set_xcursor_theme`, seat v2+) and exported as
+  `XCURSOR_THEME`/`XCURSOR_SIZE` for programs spawned after. Clients that load
+  a theme themselves at startup keep theirs until restarted.
+- `include`: path relative to the including file. Appearance directives only;
+  anything else rejects the file. Missing file = skipped, logged. No nesting.
+- Light/dark: point `include` at a symlink, swap it, `pkill -HUP satori`.
+  Reload re-proposes every window, so a gap change applies at once.
+
 ## Reloading
 
 | Trigger | Notes |
@@ -181,8 +208,9 @@ Both set `reload_pending`; the reload itself runs in the next manage sequence
 with `manage_dirty` (`src/main.c:155`) — a signal, unlike a keypress, does not
 bring one with it.
 
-A reload replaces every `river_xkb_binding_v1` proxy on every seat. Changed
-bindings take effect immediately; nothing else about the session is disturbed.
+A reload replaces every `river_xkb_binding_v1` proxy on every seat, re-proposes
+every window (gap), and re-sends the cursor. Changed bindings take effect
+immediately.
 
 ## Errors
 

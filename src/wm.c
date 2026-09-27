@@ -30,6 +30,7 @@ static void wm_manage_start(void *data, struct river_window_manager_v1 *handle) 
     // Before bindings_apply_enabled: a reload replaces every binding proxy, and
     // the new ones are enabled below, in this same sequence.
     config_reload(satori);
+    seats_apply_cursor(satori);
 
     // Before propose: leaving fullscreen clears the proposed flag so the window
     // is re-sized in this same sequence, which is what the protocol asks for.

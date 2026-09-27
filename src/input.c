@@ -434,6 +434,7 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle) {
     satori->seats = seat;
 
     layer_seat_create(satori, seat);
+    satori->cursor_dirty = true;
 
     // No key bindings without the xkb bindings global; everything else still works.
     if (satori->xkb) {
@@ -475,7 +476,36 @@ void config_reload(struct satori *satori) {
     satori->config = fresh;
     bindings_create_all(satori);
 
+    // The gap may have changed, and with it every maximized size.
+    windows_invalidate_layout(satori);
+    satori->cursor_dirty = true;
+
     satori_log("config: reloaded %zu bindings\n", fresh->len);
+}
+
+// The compositor draws the cursor over the desktop, window edges, and any client
+// using cursor-shape (foot does). The environment is for everything Satori
+// spawns afterwards that loads a theme itself. No theme in the config leaves
+// river's default alone rather than resetting it.
+void seats_apply_cursor(struct satori *satori) {
+    if (!satori->cursor_dirty) return;
+    satori->cursor_dirty = false;
+
+    const struct config *config = satori->config;
+    if (!config || !config->cursor_theme) return;
+
+    char size[16];
+    snprintf(size, sizeof size, "%u", config->cursor_size);
+    setenv("XCURSOR_THEME", config->cursor_theme, 1);
+    setenv("XCURSOR_SIZE", size, 1);
+
+    for (struct seat *seat = satori->seats; seat; seat = seat->next) {
+        if (river_seat_v1_get_version(seat->handle) < RIVER_SEAT_V1_SET_XCURSOR_THEME_SINCE_VERSION) {
+            continue;
+        }
+        river_seat_v1_set_xcursor_theme(seat->handle, config->cursor_theme, config->cursor_size);
+    }
+    satori_log("seat: cursor %s %u\n", config->cursor_theme, config->cursor_size);
 }
 
 void seats_apply_focus(struct satori *satori) {
