@@ -41,6 +41,7 @@ not unbind that chord. Use `none` for that.
 | `border` | width, focused color, unfocused color | compositor-drawn border on every window |
 | `cursor` | XCursor theme, optional size | cursor theme and size (default 24) |
 | `include` | file | reads appearance directives from another file |
+| `on-output-added` | command, one or more words | runs it when an output appears |
 
 `app-keys` defaults to `Mod+Alt`. Repeating it is allowed; the last one wins.
 
@@ -196,6 +197,22 @@ include theme
   anything else rejects the file. Missing file = skipped, logged. No nesting.
 - Light/dark: point `include` at a symlink, swap it, `pkill -HUP satori`.
   Reload re-proposes every window, so a gap change applies at once.
+
+## Output hook
+
+```
+on-output-added $HOME/.local/bin/display-mode hotplug
+```
+
+| | |
+| --- | --- |
+| Runs | `/bin/sh -c`, detached, stdio to `/dev/null` (`satori_spawn`, `src/input.c`) |
+| When | every `wm: output` (`output_create`, `src/output.c`) |
+| Includes | startup outputs; an output river re-creates after `--off` / `--on` |
+| Not | a hotplug detector — the command dedupes |
+| Includes file | refused, like `bind` |
+| Default | unset |
+| Logs | `output: ran on-output-added` |
 
 ## Reloading
 

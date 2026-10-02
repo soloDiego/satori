@@ -37,7 +37,7 @@ struct satori {
     bool got_unavailable;
     bool finished_received;
 
-    struct output   *outputs;
+    struct output   *outputs;   // oldest first; the head is the primary
     struct window   *windows;   // newest first
     // The same windows in most-recently-focused order. Kept as a second list
     // rather than by re-ordering `windows`, so cycling stays a stable ring:
@@ -217,6 +217,10 @@ struct config {
     struct border_color border_focused, border_unfocused;
     char                *cursor_theme;  // owned; NULL = leave river's default
     uint32_t            cursor_size;
+
+    // Shell command run whenever an output appears, from `on-output-added`.
+    // Owned; NULL = no hook.
+    char                *on_output_added;
 };
 
 struct binding {
@@ -232,6 +236,7 @@ extern const struct river_window_manager_v1_listener wm_listener;
 
 // output.c
 void output_create(struct satori *satori, struct river_output_v1 *handle);
+void output_link(struct satori *satori, struct output *out);
 struct output *output_from_handle(struct satori *satori, struct river_output_v1 *handle);
 void output_usable_area(const struct output *out, int32_t *x, int32_t *y,
         int32_t *width, int32_t *height);
@@ -280,6 +285,7 @@ void seat_create(struct satori *satori, struct river_seat_v1 *handle);
 void seats_apply_focus(struct satori *satori);      // manage sequence
 void seats_apply_cursor(struct satori *satori);     // manage sequence
 void seats_destroy_all(struct satori *satori);
+void satori_spawn(const char *cmd);                 // detached /bin/sh -c; no sequence constraint
 const struct action_spec *action_from_name(const char *name);
 bool config_apply_defaults(struct config *config);
 void config_reload(struct satori *satori);          // manage sequence

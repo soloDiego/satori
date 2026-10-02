@@ -65,7 +65,8 @@ Consequences:
 | screenshots | not bound; add a `bind` line |
 | move/resize with the mouse | not implemented |
 | workspaces, tags, tiling | not implemented, by design |
-| multiple monitors | tracked, not used; everything pins to one output |
+| multiple monitors | tracked, not used; windows pin to the first output seen |
+| mirror / extend | not satori's: wlr-output-management (`wlr-randr`), triggered by `on-output-added` |
 
 A config file that does not parse never costs you the session: the built-in
 table stands in at startup, and a failed reload keeps the bindings already
@@ -85,7 +86,7 @@ What Satori does with them:
 | --- | --- |
 | exclusive zones | subtracted; maximized windows get what is left, so a bar is not covered |
 | keyboard focus | handed over while a layer surface wants it, taken back after |
-| default output | the first one; where a surface that names no output lands |
+| default output | the first one seen; where a surface that names no output lands |
 | position, size, stacking | river's, not ours |
 
 Lock screens use `ext-session-lock-v1`, not layer shell, and are river's
@@ -130,7 +131,8 @@ does not depend on the compositor responding.
 Untested on a real TTY session — only ever run nested. Also:
 
 - Output hotplug is handled (`output_removed`) but never exercised on hardware.
-- Docking to a second monitor: the newest output wins, and windows follow it.
+- A second monitor gets no windows. The first output seen keeps them
+  (`output_link`, `src/output.c`), so plugging in a display moves nothing.
 - A mid-session seat unplug dangles; there is no seat listener yet.
 - Floating (Mod+Shift+Space) gets one geometry — two thirds of the usable area,
   centered. Nothing moves, resizes or snaps it yet.

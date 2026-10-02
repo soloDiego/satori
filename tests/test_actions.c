@@ -278,6 +278,22 @@ static void test_position_follows_float_geometry(void) {
     CHECK(x == 320 && y == 213);
 }
 
+// Plugging in a monitor must not move anything: the head of the list is what
+// every layout path pins to, so it has to stay the output that came first.
+static void test_new_output_does_not_become_primary(void) {
+    struct satori satori = {0};
+    struct output laptop = {0}, external = {0}, third = {0};
+
+    output_link(&satori, &laptop);
+    output_link(&satori, &external);
+    output_link(&satori, &third);
+
+    CHECK(satori.outputs == &laptop);
+    CHECK(laptop.next == &external);
+    CHECK(external.next == &third);
+    CHECK(third.next == NULL);
+}
+
 // Float coordinates belong to the output they were computed on. Keeping them
 // across a removal parks the window off screen on whatever output is left.
 static void test_forget_output_drops_float_geometry(void) {
@@ -1292,6 +1308,26 @@ static void test_config_include(void) {
     unlink(theme);
 }
 
+static void test_config_on_output_added(void) {
+    struct config *config = load_config_text("on-output-added display-mode hotplug\n");
+    CHECK(config && config->on_output_added
+            && strcmp(config->on_output_added, "display-mode hotplug") == 0);
+    config_destroy(config);
+
+    config = load_config_text("");
+    CHECK(config && !config->on_output_added);     // no hook by default
+    config_destroy(config);
+
+    CHECK(!load_config_text("on-output-added\n"));
+
+    // It runs commands, so it stays out of included (theme) files.
+    char *theme = write_include("on-output-added touch /tmp/x\n");
+    char text[256];
+    snprintf(text, sizeof text, "include %s\n", theme);
+    CHECK(!load_config_text(text));
+    unlink(theme);
+}
+
 // Gap and border both come off every side of the usable area, and position and
 // size come from the same box. Floating windows keep their own geometry.
 static void test_maximized_box_insets_gap_and_border(void) {
@@ -1340,6 +1376,7 @@ int main(void) {
     test_toggle_floating_with_nothing_focused_is_a_no_op();
     test_float_geometry_centers_inside_the_usable_area();
     test_position_follows_float_geometry();
+    test_new_output_does_not_become_primary();
     test_forget_output_drops_float_geometry();
     test_forget_output_drops_references_and_dirties();
     test_usable_area_falls_back_to_the_output();
@@ -1386,6 +1423,7 @@ int main(void) {
     test_color_parse();
     test_config_appearance();
     test_config_include();
+    test_config_on_output_added();
     test_maximized_box_insets_gap_and_border();
 
     test_focus_defers_while_a_layer_surface_holds_it();  // may crash if broken; keep last
@@ -1397,13 +1435,13 @@ int main(void) {
     printf("  ok    focus cycling, focus dirty tracking, close intent\n"
            "  ok    fullscreen toggle intent\n"
            "  ok    float toggle intent, float geometry\n"
-           "  ok    output removal, usable area, layer focus deferral\n"
+           "  ok    output order, output removal, usable area, layer focus deferral\n"
            "  ok    mru order, app_id lookup, within-app ring\n"
            "  ok    keybind tables, media keys\n"
            "  ok    chord parsing, keysym lowering\n"
            "  ok    config merge, unbind, app-keys, rejection\n"
            "  ok    binding table ownership, reload intent\n"
            "  ok    passthrough matching, escape toggle, exempt bindings\n"
-           "  ok    colors, gap, border, cursor, include\n\nPASS\n");
+           "  ok    colors, gap, border, cursor, include, on-output-added\n\nPASS\n");
     return 0;
 }

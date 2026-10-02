@@ -18,7 +18,7 @@
 
 // Run cmd via the shell, detached. Double fork so the grandchild is reparented
 // to init and never becomes a zombie satori has to reap.
-static void spawn(const char *cmd) {
+void satori_spawn(const char *cmd) {
     pid_t pid = fork();
     if (pid < 0) {
         satori_log("spawn: fork failed\n");
@@ -58,7 +58,7 @@ static void spawn(const char *cmd) {
 
 static void action_spawn(struct satori *satori, union satori_arg arg) {
     (void) satori;
-    spawn(arg.cmd);
+    satori_spawn(arg.cmd);
 }
 // The only action that is not deferred: exit_session is not window management
 // state, so it carries no sequence constraint. Every client including us is

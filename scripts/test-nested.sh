@@ -24,6 +24,10 @@ RIVER_LOG="$(mktemp -t river-test.XXXXXX.log)"
 CONF_HOME="$(mktemp -d -t satori-conf.XXXXXX)"
 CONF="$CONF_HOME/satori/config"
 mkdir -p "$CONF_HOME/satori"
+# The output hook is the one thing set from the start: it fires as the first
+# output appears, before any reload could install it.
+HOOK_MARK="$CONF_HOME/output-hook"
+printf 'on-output-added "echo hooked >> %s"\n' "$HOOK_MARK" > "$CONF"
 RIVER_PID=""
 CLIENT_PID=""
 FS_PID=""
@@ -156,6 +160,14 @@ fi
 
 check "sees an output"                 'wm: output'
 check "sees a seat"                    'wm: seat'
+check "runs on-output-added"           'output: ran on-output-added'
+for _ in {1..50}; do [ -s "$HOOK_MARK" ] && break; sleep 0.1; done
+if [ -s "$HOOK_MARK" ]; then
+    echo "  ok    the output hook command actually ran"
+else
+    echo "  FAIL  the output hook command actually ran (no $HOOK_MARK)"
+    FAILED=1
+fi
 # Layer surfaces that name no output need a default, or they have nowhere to go.
 check "picks a default layer output"   'layer: default output'
 

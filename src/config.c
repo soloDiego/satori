@@ -452,6 +452,21 @@ static bool cursor_directive(struct config *config, const struct scfg_directive 
     return true;
 }
 
+// on-output-added <command>. Words joined like spawn's. Not allowed in an
+// included file: it runs commands, and includes are for the look.
+static bool on_output_added_directive(struct config *config,
+        const struct scfg_directive *directive, const char *path) {
+    if (directive->params_len < 1) {
+        satori_log("config: %s:%d: on-output-added needs a command\n", path, directive->lineno);
+        return false;
+    }
+    char *cmd = join_params(directive->params, directive->params_len);
+    if (!cmd) return false;
+    free(config->on_output_added);
+    config->on_output_added = cmd;
+    return true;
+}
+
 // The directives an included file may hold. Appearance only: that is what
 // changes with the light/dark theme, and it keeps bind precedence a property
 // of one file.
@@ -581,6 +596,8 @@ struct config *config_load(const char *path, bool with_defaults) {
             if (!passthrough_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "include") == 0) {
             if (!include_directive(config, directive, path)) ok = false;
+        } else if (strcmp(directive->name, "on-output-added") == 0) {
+            if (!on_output_added_directive(config, directive, path)) ok = false;
         } else if (strcmp(directive->name, "app-keys") != 0) {
             bool handled;
             if (!appearance_directive(config, directive, path, &handled)) ok = false;
@@ -610,6 +627,7 @@ void config_destroy(struct config *config) {
     free(config->passthrough);
 
     free(config->cursor_theme);
+    free(config->on_output_added);
     free(config);
 }
 

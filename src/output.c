@@ -1,4 +1,5 @@
-// Outputs: one per monitor. Satori currently pins everything to the first one.
+// Outputs: one per monitor. Satori pins everything to the first one -- the
+// oldest, so plugging in a monitor does not move anything.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +58,15 @@ static const struct river_output_v1_listener output_listener = {
     .removed    = output_removed,
 };
 
+// Appended, not prepended: every layout path uses the list head, and the head
+// must stay the output that was there first. Prepending made a freshly plugged
+// in monitor the primary, and every window followed it off the laptop.
+void output_link(struct satori *satori, struct output *out) {
+    struct output **pp = &satori->outputs;
+    while (*pp) pp = &(*pp)->next;
+    *pp = out;
+}
+
 void output_create(struct satori *satori, struct river_output_v1 *handle) {
     struct output *out = calloc(1, sizeof *out);
     if (!out) {
@@ -66,12 +76,20 @@ void output_create(struct satori *satori, struct river_output_v1 *handle) {
     out->handle = handle;
     out->satori = satori;
 
-    out->next = satori->outputs;
-    satori->outputs = out;
+    output_link(satori, out);
 
     river_output_v1_add_listener(handle, &output_listener, out);
     layer_output_create(satori, out);
     satori_log("wm: output\n");
+
+    // Not window management state, so no sequence to wait for. Runs for every
+    // output, including the ones present at startup and an output river
+    // re-creates after it is switched off and on: telling a real hotplug apart
+    // is the hook's job, since satori cannot see connector names.
+    if (satori->config && satori->config->on_output_added) {
+        satori_spawn(satori->config->on_output_added);
+        satori_log("output: ran on-output-added\n");
+    }
 }
 
 // Where a maximized window goes: the output minus whatever layer surfaces have
