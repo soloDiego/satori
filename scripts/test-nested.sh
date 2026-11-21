@@ -257,6 +257,14 @@ if [ -x "$KEYPRESS" ]; then
     check_count "super+f fullscreens the focused window" \
         'window: fullscreen on' "$((fs_on_before + 1))"
 
+    # River draws fullscreen above every normal window, so cycling away must
+    # hide it or the newly focused window stays covered. Two windows here, so a
+    # second super+j comes back to it.
+    press super+j
+    check "cycling away hides the fullscreen window"  'window: hidden'
+    press super+j
+    check "cycling back shows it again"               'window: shown'
+
     # Toggling has to come back off. windows_apply_fullscreen clears the dirty
     # flag after applying, so a toggle that sets it only once goes fullscreen and
     # stays there -- with no bind left to escape it.

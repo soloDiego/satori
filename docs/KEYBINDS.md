@@ -57,6 +57,10 @@ land in `windows_apply_fullscreen` and a window fullscreened by the client (foot
 bind, a video player) leaves fullscreen on Mod+F. Fullscreen covers the whole
 output including any exclusive zone, so a bar is hidden while it is up.
 
+Focusing away (Mod+J/K, Mod+Alt+<letter>) hides a fullscreen window; focusing
+it again shows it, still fullscreen. River draws fullscreen above every normal
+window, so raising alone cannot uncover the window focus moved to.
+
 Mod+Shift+Space pairs the same way with a client's `unmaximize_requested`: both
 set `floating` and clear `proposed`, and `windows_propose` applies either. A
 floating window is sized two thirds of the usable area, centered, the first time

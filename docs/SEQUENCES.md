@@ -153,6 +153,12 @@ client's request events and a binding's `pressed` are followed by a
 `fullscreen_dirty` is cleared once applied, so the toggle has to set it on every
 press. Setting it only on the way in strands the window fullscreen.
 
+Fullscreen ignores stacking: river draws it above every normal window, whatever
+the node order. So `windows_render` hides a fullscreen window that is not
+focused (`window_should_hide`) and shows it when focus returns. `hide`/`show`
+are rendering state; sent on change only (`win->hidden`). Without this, cycling
+away moves the keyboard to a window still covered by the fullscreen one.
+
 ## Floating, and why it needs no dirty flag of its own
 
 Same two entry points: `win_unmaximize_requested` / `win_maximize_requested`

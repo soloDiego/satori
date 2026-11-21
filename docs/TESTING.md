@@ -62,6 +62,9 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   because `windows_apply_fullscreen` clears the dirty flag after applying: a
   toggle that sets it only once goes fullscreen and stays there, with no bind
   left to escape it
+- `window: hidden` then `window: shown` after super+j twice while fullscreen --
+  cycling away hides the fullscreen window (river draws it above everything),
+  cycling back shows it
 - `window: propose 853x480 floating` after super+shift+space, then one more
   `... maximized` after a second press -- the float toggle round trip. The size
   is asserted, not just the word: two thirds of the 1280x720 headless output

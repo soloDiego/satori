@@ -198,6 +198,25 @@ static void test_toggle_fullscreen_leaves_a_client_fullscreened_window(void) {
     CHECK(f.newest.fs_output == NULL);
 }
 
+// River draws fullscreen above everything, so only hiding uncovers the window
+// focus moved to. Hidden exactly when fullscreen and unfocused.
+static void test_unfocused_fullscreen_window_is_hidden(void) {
+    struct fixture f;
+    fixture_init(&f);
+    f.middle.fullscreen = true;
+
+    f.satori.focused = &f.middle;
+    CHECK(!window_should_hide(&f.middle));
+    CHECK(!window_should_hide(&f.newest));     // not fullscreen: raise handles it
+
+    f.satori.focused = &f.newest;               // cycled away
+    CHECK(window_should_hide(&f.middle));
+    CHECK(!window_should_hide(&f.newest));
+
+    f.middle.fullscreen = false;                // left fullscreen while unfocused
+    CHECK(!window_should_hide(&f.middle));
+}
+
 static void test_toggle_fullscreen_with_nothing_focused_is_a_no_op(void) {
     struct satori satori = {0};
     action_toggle_fullscreen(&satori, NOARG);
@@ -1372,6 +1391,7 @@ int main(void) {
     test_toggle_fullscreen_marks_only_the_focused_window();
     test_toggle_fullscreen_leaves_a_client_fullscreened_window();
     test_toggle_fullscreen_with_nothing_focused_is_a_no_op();
+    test_unfocused_fullscreen_window_is_hidden();
     test_toggle_floating_marks_only_the_focused_window();
     test_toggle_floating_with_nothing_focused_is_a_no_op();
     test_float_geometry_centers_inside_the_usable_area();

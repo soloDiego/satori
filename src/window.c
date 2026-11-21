@@ -434,6 +434,28 @@ static void window_borders(const struct window *win) {
             config->border_width, c->r, c->g, c->b, c->a);
 }
 
+// River draws a fullscreen window above every normal one regardless of node
+// order, so raising the focused window cannot uncover it: cycling away would
+// move the keyboard to a window buried under the fullscreen one. Hidden while
+// unfocused instead, and shown again when focus comes back -- still fullscreen,
+// so returning to it costs no resize.
+bool window_should_hide(const struct window *win) {
+    return win->fullscreen && win != win->satori->focused;
+}
+
+// hide/show are rendering state. Sent on change only, so the log line is too.
+static void window_visibility(struct window *win) {
+    bool hide = window_should_hide(win);
+    if (hide == win->hidden) return;
+    if (hide) {
+        river_window_v1_hide(win->handle);
+    } else {
+        river_window_v1_show(win->handle);
+    }
+    win->hidden = hide;
+    satori_log("window: %s\n", hide ? "hidden" : "shown");
+}
+
 void windows_render(struct satori *satori) {
     struct output *out = satori->outputs;
 
@@ -448,6 +470,7 @@ void windows_render(struct satori *satori) {
         }
         river_node_v1_place_bottom(win->node);
         window_borders(win);
+        window_visibility(win);
     }
 
     // Raise the focused window. Without this, stacking follows creation order

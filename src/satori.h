@@ -127,7 +127,8 @@ struct window {
     bool fullscreen;        // desired state, not necessarily the applied one
     bool fullscreen_dirty;  // fullscreen differs from what the server has; apply it
     struct output           *fs_output;     // output to fullscreen on; NULL = the first
-    struct window           *next;      // creation order: stacking, and Mod+J/K
+    bool hidden;            // hide sent: fullscreen but not focused (window_should_hide)
+    struct window           *next;     // creation order: stacking, and Mod+J/K
     struct window           *mru_next;  // recency order: the app_id lookup
 };
 
@@ -258,6 +259,7 @@ void window_maximized_box(const struct satori *satori, const struct output *out,
         int32_t *x, int32_t *y, int32_t *width, int32_t *height);
 void window_position(const struct window *win, const struct output *out,
         int32_t *x, int32_t *y);
+bool window_should_hide(const struct window *win);
 void windows_invalidate_layout(struct satori *satori);
 void windows_forget_output(struct satori *satori, struct output *out);
 void windows_apply_fullscreen(struct satori *satori);   // manage sequence
