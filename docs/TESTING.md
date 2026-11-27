@@ -119,6 +119,10 @@ chords -> kill the client (exercises `win_closed`) -> SIGINT satori -> check the
   -- a real layer surface (`fuzzel`, skipped if not installed) maps, takes the
   keyboard, and Satori takes it back. Only exercises the *exclusive* path;
   non-exclusive focus has no coverage here, see below
+- `wm: session locked` / `unlocked` plus one more `seat: focus window` -- a
+  real `gtklock -p` (skipped if not installed) locks, SIGUSR1 unlocks, and
+  Satori re-sends focus. Mutant: drop `focus_dirty` in `wm_session_unlocked` →
+  red
 - survives the client closing -- no crash in the unlink/free path
 - `wm: finished` + process exits -- clean shutdown
 - no ASan/LSan findings (asan run) -- no leaked proxies

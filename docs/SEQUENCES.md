@@ -292,6 +292,14 @@ starts and never appears. The bind is the feature; the rest is arbitration.
 - A layer surface that names no output needs a default, or it has nowhere to go.
   `set_default` is manage-sequence state; `default_output_dirty` carries it.
 
+## Session lock
+
+- The lock surface takes the keyboard. On `session_unlocked` river does **not**
+  restore it, and `satori->focused` is unchanged, so nothing marks focus dirty:
+  the focused window stays deaf until the next focus change.
+- `wm_session_unlocked` sets `focus_dirty`; the `manage_start` that follows
+  re-sends `focus_window`. Record intent, no `manage_dirty`.
+
 ## What is not modelled yet
 
 - Everything pins to `satori->outputs`, the first output. Single monitor by

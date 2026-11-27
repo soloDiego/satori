@@ -55,8 +55,14 @@ static void wm_session_locked(void *data, struct river_window_manager_v1 *handle
     satori_log("wm: session locked\n");
 }
 static void wm_session_unlocked(void *data, struct river_window_manager_v1 *handle) {
-    (void)data; (void)handle;
+    (void)handle;
+    struct satori *satori = data;
     satori_log("wm: session unlocked\n");
+    // The lock surface took the keyboard and river does not hand it back:
+    // satori->focused is unchanged, so nothing else marks focus dirty and the
+    // window stays deaf until the next focus change. Re-send it in the
+    // manage_start the protocol guarantees after this event.
+    satori->focus_dirty = true;
 }
 static void wm_window(void *data, struct river_window_manager_v1 *handle, struct river_window_v1 *id) {
     (void) handle;

@@ -34,6 +34,7 @@ FS_PID=""
 APP_PID=""
 PT_PID=""
 LAYER_PID=""
+LOCK_PID=""
 SECOND_PID=""
 SECOND_LOG="$(mktemp -t satori-second.XXXXXX.log)"
 FAILED=0
@@ -45,6 +46,7 @@ cleanup() {
     [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
     [ -n "$PT_PID" ] && kill "$PT_PID" 2>/dev/null
     [ -n "$LAYER_PID" ] && kill "$LAYER_PID" 2>/dev/null
+    [ -n "$LOCK_PID" ] && kill -USR1 "$LOCK_PID" 2>/dev/null
     [ -n "$RIVER_PID" ] && kill "$RIVER_PID" 2>/dev/null
     wait 2>/dev/null
     rm -rf "$CONF_HOME"
@@ -520,6 +522,26 @@ if command -v fuzzel >/dev/null; then
     check_count "returns focus to a window"  'seat: focus window' "$((focus_before + 1))"
 else
     echo "  ..    skipping layer shell (fuzzel not installed)"
+fi
+
+# Session lock. The lock surface takes the keyboard and river does not hand it
+# back on unlock: satori has to re-send focus, or the focused window is deaf
+# until something else moves focus. gtklock -p (any password) unlocks on
+# SIGUSR1, so no typing is needed. XDG_CONFIG_HOME keeps the user's style out.
+if command -v gtklock >/dev/null; then
+    WAYLAND_DISPLAY="$NESTED" GDK_BACKEND=wayland XDG_CONFIG_HOME="$CONF_HOME" \
+        gtklock -p >/dev/null 2>&1 &
+    LOCK_PID=$!
+    check "sees the session lock"            'wm: session locked'
+
+    focus_before="$(grep -cE 'seat: focus window' "$LOG")"
+    kill -USR1 "$LOCK_PID" 2>/dev/null
+    LOCK_PID=""
+    check "sees the session unlock"          'wm: session unlocked'
+    check_count "re-focuses the window after unlock" \
+        'seat: focus window' "$((focus_before + 1))"
+else
+    echo "  ..    skipping session lock (gtklock not installed)"
 fi
 
 # Closing the client must exercise win_closed without taking satori down.
